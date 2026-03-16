@@ -1,0 +1,157 @@
+
+============================================================
+1. GLOBAL STATS
+============================================================
+Total training clips : 35549
+Unique primary labels: 206
+Taxonomy species      : 234
+Train soundscapes rows: 1478
+Train soundscape files: 66
+
+============================================================
+2. COLLECTION BREAKDOWN
+============================================================
+  XC        :  23043 clips (64.8%)
+  iNat      :  12506 clips (35.2%)
+
+============================================================
+3. TAXONOMY CLASS BREAKDOWN
+============================================================
+  Aves                :  162 species
+  Amphibia            :   35 species
+  Insecta             :   28 species
+  Mammalia            :    8 species
+  Reptilia            :    1 species
+
+Train clips by class_name:
+  Aves                :  34799 clips (97.9%)
+  Amphibia            :    451 clips (1.3%)
+  Insecta             :    199 clips (0.6%)
+  Mammalia            :     99 clips (0.3%)
+  Reptilia            :      1 clips (0.0%)
+
+============================================================
+4. SAMPLES PER SPECIES (primary label only)
+============================================================
+  Min    :     1  (516975)
+  Median :   125
+  Mean   :   172.6
+  Max    :   499  (rubthr1)
+
+  Distribution:
+    1           :    4 species
+    2-5         :   14 species
+    6-10        :    9 species
+    11-20       :    9 species
+    21-50       :   16 species
+    51-100      :   31 species
+    101-200     :   54 species
+    201-500     :   69 species
+
+============================================================
+5. SPECIES WITH < 10 CLIPS (will be duplicated before fold split)
+============================================================
+  Count: 25
+    23150  [Amphibia  ]   1 clips  Central Dwarf Frog
+    116570  [Reptilia  ]   1 clips  Southern Spectacled Caiman
+    516975  [Mammalia  ]   1 clips  Hooded Capuchin
+    23724  [Amphibia  ]   1 clips  Waxy Monkey Tree Frog
+    209233  [Mammalia  ]   2 clips  Feral Horse
+    24321  [Amphibia  ]   2 clips  Mato Grosso Snouted Tree Frog
+    70711  [Amphibia  ]   2 clips  Cei's White-lipped Frog
+    sptnig1  [Aves      ]   3 clips  Spot-tailed Nightjar
+    25214  [Amphibia  ]   3 clips  Muller's Termite Frog
+    476521  [Amphibia  ]   3 clips  Cuyaba Dwarf Frog
+    555123  [Amphibia  ]   3 clips  Usina Tree Frog
+    74580  [Mammalia  ]   3 clips  Black-tailed Marmoset
+    64898  [Amphibia  ]   3 clips  Yungas de la Paz Poison Frog
+    23176  [Amphibia  ]   4 clips  Cope's Swamp Froglet
+    738183  [Mammalia  ]   5 clips  White-coated Titi
+    66971  [Amphibia  ]   5 clips  Paraguayan Swimming Frog
+    1595929  [Amphibia  ]   5 clips  Uruguay Harlequin Frog
+    23154  [Amphibia  ]   5 clips  Bahia Dwarf Frog
+    22961  [Amphibia  ]   6 clips  Pointedbelly Frog
+    22985  [Amphibia  ]   6 clips  Peter's Jungle Frog
+    22930  [Amphibia  ]   6 clips  Basin White-lipped Frog
+    67252  [Amphibia  ]   6 clips  Milk Frog
+    760266  [Insecta   ]   7 clips  Prionacris erosa
+    22967  [Amphibia  ]   8 clips  Marbled White-lipped Frog
+    555145  [Amphibia  ]   9 clips  Polka-dot Tree Frog
+
+============================================================
+6. RATING DISTRIBUTION (XC clips, 0=unrated/iNat)
+============================================================
+  XC clips with rating ≥ 3.5: 18557
+  XC clips with rating < 3.5 : 4486
+  XC clips with rating = 0.0 : 343
+  iNat clips (all rating=0)  : 12506
+
+============================================================
+7. SECONDARY LABELS
+============================================================
+  Clips with ≥1 secondary label  : 4372 (12.3%)
+  Total secondary label instances: 7431
+  Unique secondary species       : 161
+
+============================================================
+8. TRAIN SOUNDSCAPES LABELS
+============================================================
+  5s segments                : 1478
+  Total species instances    : 6244
+  Unique species in soundscapes: 75
+  Most common in soundscapes : [('65380', 666), ('517063', 626), ('22973', 426), ('555146', 420), ('23158', 350)]
+
+============================================================
+9. COVERAGE
+============================================================
+  Species in taxonomy  : 234
+  Species in train_csv : 206
+  In taxonomy, not in train: 28
+    1491113  [Amphibia  ]  Guaraní leaf-litter frog
+    25073  [Amphibia  ]  Chiasmocleis mehelyi
+    47158son01  [Insecta   ]  Insect sonotype01
+    47158son02  [Insecta   ]  Insect sonotype02
+    47158son03  [Insecta   ]  Insect sonotype03
+    47158son04  [Insecta   ]  Insect sonotype04
+    47158son05  [Insecta   ]  Insect sonotype05
+    47158son06  [Insecta   ]  Insect sonotype06
+    47158son07  [Insecta   ]  Insect sonotype07
+    47158son08  [Insecta   ]  Insect sonotype08
+    47158son09  [Insecta   ]  Insect sonotype09
+    47158son10  [Insecta   ]  Insect sonotype10
+    47158son11  [Insecta   ]  Insect sonotype11
+    47158son12  [Insecta   ]  Insect sonotype12
+    47158son13  [Insecta   ]  Insect sonotype13
+    47158son14  [Insecta   ]  Insect sonotype14
+    47158son15  [Insecta   ]  Insect sonotype15
+    47158son16  [Insecta   ]  Insect sonotype16
+    47158son17  [Insecta   ]  Insect sonotype17
+    47158son18  [Insecta   ]  Insect sonotype18
+    47158son19  [Insecta   ]  Insect sonotype19
+    47158son20  [Insecta   ]  Insect sonotype20
+    47158son21  [Insecta   ]  Insect sonotype21
+    47158son22  [Insecta   ]  Insect sonotype22
+    47158son23  [Insecta   ]  Insect sonotype23
+    47158son24  [Insecta   ]  Insect sonotype24
+    47158son25  [Insecta   ]  Insect sonotype25
+    517063  [Amphibia  ]  Southern Orange-legged Leaf Frog
+
+============================================================
+10. GEOGRAPHIC SPREAD
+============================================================
+  Clips with GPS coords: 35549 / 35549
+  Lat range  : -54.86 – 69.58
+  Lon range  : -159.66 – 175.32
+
+============================================================
+11. 5-FOLD STRATIFIED ASSIGNMENT
+============================================================
+  Rare species (< 10 clips, will duplicate for fold stratification): 25
+  Fold size distribution:
+    fold 0: 7110 clips
+    fold 1: 7109 clips
+    fold 2: 7110 clips
+    fold 3: 7110 clips
+    fold 4: 7110 clips
+
+  Saved → /home/swatson/work/MachineLearning/kaggle/BirdCLEF/data/processed/train_folds.csv

@@ -1,0 +1,72 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+# Note: jupyter/*.ipynb is tracked for Kaggle submission
+
+# Data files (keep structure, exclude large audio/binary files)
+/data/raw/train_audio/
+/data/raw/train_soundscapes/
+/data/raw/test_soundscapes/
+/data/raw/*.zip
+/data/processed/*.csv
+/data/processed/*.pkl
+
+# Model checkpoints and weights
+/models/**/*.pth
+/models/**/*.pt
+/models/**/*.onnx
+/models/ensemble_onnx/
+# Perch model binaries (large files — download via src/download_perch.py)
+/models/perch/model/
+/models/perch/ebird2021.csv
+
+# Training logs
+/log/*.log
+*.log
+
+# Results and outputs
+/results/
+submission.csv
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+
+# OS
+.DS_Store
+Thumbs.db
