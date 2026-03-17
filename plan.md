@@ -922,9 +922,11 @@ Worst species: insect sonotypes (`47158sonXX`) dominate — AUC as low as 0.2416
 Outputs: `data/processed/hard_species_stage1.txt`, `per_species_auc_stage1.csv`, `eval_stage1_predictions.csv`.  
 Apply 4× sample weight for worst-30 species in Stage 2+.
 
-### #7 ⬜ — First Custom SED Submission
-Export Stage 1 ensemble to ONNX → submit notebook → check LB  
-**Gate**: LB > Perch baseline. Tag `SED_B0_Stage1_<score>`.
+### #7 ✅ — First Custom SED Submission — *Done 2026-03-16*
+Exported 5-fold EfficientNet-B0 ensemble to ONNX (opset 17, `dynamo=False`, 16.3MB each) via `src/export_onnx.py`.  
+Built Kaggle inference notebook `jupyter/sed/birdclef2026-sed-inference.ipynb`: sliding 20s window / 5s stride, 5-fold ONNX ensemble, CPU-only.  
+Uploaded ONNX + PT checkpoints to Kaggle dataset `stevewatson999/birdclef2026-sed-models`. Pushed notebook to `stevewatson999/birdclef-2026-sed-inference` (version 1). Awaiting LB score.  
+**Gate**: LB > 0.590 (Perch baseline). Tag `SED_B0_Stage1_<score>` after result.
 
 ### #8 ⬜ — Pseudo-label Generation (~4 hours)
 Run inference on all unlabeled `train_soundscapes`  
