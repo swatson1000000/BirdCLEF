@@ -922,35 +922,29 @@ Worst species: insect sonotypes (`47158sonXX`) dominate — AUC as low as 0.2416
 Outputs: `data/processed/hard_species_stage1.txt`, `per_species_auc_stage1.csv`, `eval_stage1_predictions.csv`.  
 Apply 4× sample weight for worst-30 species in Stage 2+.
 
-### #7 ✅ — First Custom SED Submission — *Done 2026-03-16*
-Exported 5-fold EfficientNet-B0 ensemble to ONNX (opset 17, `dynamo=False`, 16.3MB each) via `src/export_onnx.py`.  
-Built Kaggle inference notebook `jupyter/sed/birdclef2026-sed-inference.ipynb`: sliding 20s window / 5s stride, 5-fold ONNX ensemble, CPU-only.  
-Uploaded ONNX + PT checkpoints to Kaggle dataset `stevewatson999/birdclef2026-sed-models`. Pushed notebook to `stevewatson999/birdclef-2026-sed-inference` (version 1). Awaiting LB score.  
-**Gate**: LB > 0.590 (Perch baseline). Tag `SED_B0_Stage1_<score>` after result.
-
-### #8 ⬜ — Pseudo-label Generation (~4 hours)
+### #7 ⬜ — Pseudo-label Generation (~4 hours)
 Run inference on all unlabeled `train_soundscapes`  
 Save confidence-weighted pseudo-labels to `data/processed/pseudo_labels_v1.csv`
 
-### #9 ⬜ — Self-training Iteration 1 (~2 days)
+### #8 ⬜ — Self-training Iteration 1 (~2 days)
 Train Noisy Student: focal + pseudo-labeled data + hard negative upsampling  
 **Gate**: LB improvement +3–4 pts vs Stage 1. Tag `SED_B0_SelfTrain1_<score>`.
 
-### #10 ⬜ — Multi-iterative pseudo-labeling (iterations 2–4)
+### #9 ⬜ — Multi-iterative pseudo-labeling (iterations 2–4)
 Each iteration: generate new pseudo-labels → apply power transform → retrain with larger models  
 **Gate after each**: submit to LB, check improvement. Stop when delta < 0.001.
 
-### #11 ⬜ — Dedicated Insecta/Amphibia Model
+### #10 ⬜ — Dedicated Insecta/Amphibia Model
 Train on expanded Xeno-canto insect/amphibian data with hard negative emphasis
 
-### #12 ⬜ — Final Ensemble Construction
+### #11 ⬜ — Final Ensemble Construction
 Combine 6–7 models from multiple stages  
 Apply model soup (checkpoint weight averaging: last 3 epochs within backbone)
 
-### #13 ⬜ — ONNX Export & Inference Notebook
+### #12 ⬜ — ONNX Export & Inference Notebook
 Export all models (without torch.compile active) → build submission notebook → time locally (should be ≤60 min) → submit
 
-### #14 ⬜ — Inference Tuning
+### #13 ⬜ — Inference Tuning
 - Sweep `smoothing kernel shape`, `delta-shift TTA`, `power adjustment` on local val
 - Target: +0.005–0.01 ROC-AUC from post-processing
 - Tag final best submission `Final_ensemble_<score>`
@@ -964,9 +958,9 @@ Export all models (without torch.compile active) → build submission notebook �
 | Mar 13–16 | #0–#2 | Fix CLAUDE.md, setup, data download, EDA |
 | Mar 17–18 | #3 | Google Perch baseline submission |
 | Mar 19–21 | #4 | Core pipeline (config, dataset, model, utils) |
-| Mar 22 – Apr 4 | #5–#7 | Stage 1 training + hard neg mining + first SED submission |
-| Apr 5–11 | #8–#9 | Pseudo-labeling + self-training iter 1 |
-| Apr 12 – May 2 | #10 | Multi-iterative pseudo-labeling (iterations 2–4) |
-| May 3–16 | #11–#12 | Insecta model + final ensemble construction |
-| May 17 – May 27 | #13–#14 | ONNX, notebook, inference tuning |
+| Mar 22 – Apr 4 | #5–#6 | Stage 1 training + hard neg mining |
+| Apr 5–11 | #7–#8 | Pseudo-labeling + self-training iter 1 |
+| Apr 12 – May 2 | #9 | Multi-iterative pseudo-labeling (iterations 2–4) |
+| May 3–16 | #10–#11 | Insecta model + final ensemble construction |
+| May 17 – May 27 | #12–#13 | ONNX, notebook, inference tuning |
 | May 27 – Jun 3 | Buffer | Final tweaks, best submission selection |
