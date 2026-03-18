@@ -569,6 +569,13 @@ weight[soundscape] = sum(max_prob over segments and classes)
 ```
 Use `WeightedRandomSampler` so high-quality pseudo-labeled soundscapes are sampled more often.
 
+> ⚠️ **Critical: exclude val files from pseudo-label training dataset**
+> `train_soundscapes_labels.csv` contains 66 files that are also in `train_soundscapes/`.
+> If these are included in the pseudo-label training data, the model trains on pseudo-labels
+> for the exact files used for validation → artificially inflated val ROC-AUC (~+0.07)
+> with no LB improvement. `src/self_train.py` filters these out automatically.
+> Learned from SED_B0_SelfTrain1: local val=0.8395 but LB=0.751 (≈ Stage 1).
+
 ### 2.2 Self-Training (`src/self_train.py`)
 
 Self-training loop (Noisy Student style):
@@ -775,7 +782,7 @@ These constraints are absolute and must never be violated in the submission:
 | No internet | Yes | Must upload all data/models to Kaggle Dataset |
 | Submission filename | `submission.csv` | Required exactly |
 | Spectrogram reuse | Required | Pre-compute mel once, feed to all 7 models |
-| ONNX (not PyTorch) | Strongly preferred | 2–3× faster on CPU |
+| PyTorch (not ONNX) | `.pt` checkpoints via `torch.load` | ONNX export dropped — PyTorch CPU inference fits within 90-min budget |
 | No quantization | Yes | Can hurt accuracy — don't use unless fitting 90min otherwise |
 | Model upload | Kaggle Dataset | Upload to `stevewatson999/birdclef2026-models` |
 
@@ -794,7 +801,8 @@ Each training run creates:
 | Tag | Backbone | Stage | Val ROC-AUC | LB ROC-AUC | Notes |
 |-----|---------|-------|-------------|-----------|-------|
 | `Perch_baseline` | Google Perch | 0.5 | — | 0.590 | Zero-shot, 158/234 species mapped, 2026-03-16 |
-| `SED_B0_Stage1` | EfficientNet-B0 | 1 | 0.7408 (mean) | — | Fold scores: F0=0.7601 F1=0.7500 F2=0.7295 F3=0.7339 F4=0.7305; 15 epochs BF16, 2026-03-16 |
+| `SED_B0_Stage1` | EfficientNet-B0 | 1 | 0.7408 (mean) | 0.752 | Fold scores: F0=0.7601 F1=0.7500 F2=0.7295 F3=0.7339 F4=0.7305; 15 epochs BF16, 2026-03-16 |
+| `SED_B0_SelfTrain1` | EfficientNet-B0 | 2 | 0.8395 (ensemble) | 0.751 | Fold best: F0=0.8252 F1=0.8310 F2=0.8283 F3=0.8263 F4=0.8246; 30 epochs Noisy Student, power=1.0, 2026-03-17. **Val inflated by leakage** — all 66 val files were in pseudo-label training data. Fixed in v2: exclude val files from pseudo dataset. |
 
 ### Git Tag Conventions
 ```bash
@@ -922,13 +930,17 @@ Worst species: insect sonotypes (`47158sonXX`) dominate — AUC as low as 0.2416
 Outputs: `data/processed/hard_species_stage1.txt`, `per_species_auc_stage1.csv`, `eval_stage1_predictions.csv`.  
 Apply 4× sample weight for worst-30 species in Stage 2+.
 
-### #7 ⬜ — Pseudo-label Generation (~4 hours)
-Run inference on all unlabeled `train_soundscapes`  
-Save confidence-weighted pseudo-labels to `data/processed/pseudo_labels_v1.csv`
+### #7 ✅ — Pseudo-label Generation — *Done 2026-03-17*
+Ran `src/pseudo_label.py` (5-fold ensemble) on all 10,658 train soundscapes.  
+Runtime: 72m 52s. Output: 127,896 rows, 188/234 species with max_prob > 0.5, mean max prob = 0.760.  
+Files: `data/processed/pseudo_labels_v1.csv`, `data/processed/pseudo_labels_v1_weights.csv`.
 
-### #8 ⬜ — Self-training Iteration 1 (~2 days)
-Train Noisy Student: focal + pseudo-labeled data + hard negative upsampling  
-**Gate**: LB improvement +3–4 pts vs Stage 1. Tag `SED_B0_SelfTrain1_<score>`.
+### #8 ✅ — Self-training Iteration 1 — *Done 2026-03-17*
+Noisy Student self-training: focal + pseudo_labels_v1.csv (power=1.0) + warm-start from Stage 1.  
+30 epochs × 5 folds, EfficientNet-B0, seed 42. ~13 hours.  
+Per-fold best val ROC-AUC: F0=0.8252 F1=0.8310 F2=0.8283 F3=0.8263 F4=0.8246  
+**Ensemble val ROC-AUC: 0.8395** (Stage 1 was 0.7636, +0.076 gain).  
+**Gate**: Submit to Kaggle LB. Tag `SED_B0_SelfTrain1_<score>`.
 
 ### #9 ⬜ — Multi-iterative pseudo-labeling (iterations 2–4)
 Each iteration: generate new pseudo-labels → apply power transform → retrain with larger models  
@@ -941,8 +953,8 @@ Train on expanded Xeno-canto insect/amphibian data with hard negative emphasis
 Combine 6–7 models from multiple stages  
 Apply model soup (checkpoint weight averaging: last 3 epochs within backbone)
 
-### #12 ⬜ — ONNX Export & Inference Notebook
-Export all models (without torch.compile active) → build submission notebook → time locally (should be ≤60 min) → submit
+### #12 ⬜ — Inference Notebook
+Load all `.pt` checkpoints via `torch.load` (CPU) → build submission notebook → time locally (should be ≤60 min) → submit
 
 ### #13 ⬜ — Inference Tuning
 - Sweep `smoothing kernel shape`, `delta-shift TTA`, `power adjustment` on local val
@@ -962,5 +974,5 @@ Export all models (without torch.compile active) → build submission notebook �
 | Apr 5–11 | #7–#8 | Pseudo-labeling + self-training iter 1 |
 | Apr 12 – May 2 | #9 | Multi-iterative pseudo-labeling (iterations 2–4) |
 | May 3–16 | #10–#11 | Insecta model + final ensemble construction |
-| May 17 – May 27 | #12–#13 | ONNX, notebook, inference tuning |
+| May 17 – May 27 | #12–#13 | Inference notebook, inference tuning |
 | May 27 – Jun 3 | Buffer | Final tweaks, best submission selection |

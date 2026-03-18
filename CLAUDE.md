@@ -1,16 +1,6 @@
 # CLAUDE.md - Execution Guidelines
 
-## Project Development Approach
-
-This project is being built using **Python scripts** (`.py` files), not Jupyter notebooks (`.ipynb` files). This approach provides:
-
-- **Production-ready code** - Scripts are more maintainable and reproducible
-- **Better version control** - Python files track changes more cleanly
-- **Scalability** - Scripts can be easily integrated into pipelines
-- **Background execution** - Scripts run with `nohup` for long-running tasks
-- **Logging** - All output is captured to timestamped log files
-
-Jupyter notebooks may be used later for exploratory analysis, but the core implementation uses standalone Python scripts.
+> Canonical execution policy is in `.github/copilot-instructions.md`. This file retains extended examples for reference.
 
 ## Environment Setup
 
@@ -147,7 +137,7 @@ Before executing any training scripts, run:
 
 ```bash
 cd /home/swatson/work/MachineLearning/kaggle/BirdCLEF
-rm -f log/train_*.log
+rm -f log/*.log
 ```
 
 ### Complete Workflow for Training Restart
@@ -159,8 +149,8 @@ conda activate kaggle
 # Step 2: Navigate to project
 cd /home/swatson/work/MachineLearning/kaggle/BirdCLEF
 
-# Step 3: Clean old training logs
-rm -f log/train_*.log
+# Step 3: Clean ALL logs
+rm -f log/*.log
 
 # Step 4: Start ByT5 training
 nohup python -u src/train_byt5.py --epochs 20 --output-dir models/byt5-akkadian > log/train_byt5_$(date +%Y%m%d_%H%M%S).log 2>&1 &
@@ -183,7 +173,7 @@ tail -f log/train_byt5_*.log
 # Clean all training logs
 rm -f log/train_*.log
 
-# Clean all logs (more aggressive)
+# Clean all logs
 rm -f log/*.log
 
 # View cleaned log directory
@@ -202,13 +192,14 @@ All training scripts **MUST** include a per-epoch summary callback with the foll
 
 ```
 ========================================
-Epoch  N/20: train_loss=X.XXXX val_loss=X.XXXX BLEU=XX.XX chrF++=XX.XX GeoMean=XX.XX time=Xm XXs ★ BEST
+Epoch  N/20: train_loss=X.XXXX val_loss=X.XXXX BLEU=XX.XX chrF++=XX.XX GeoMean=XX.XX time=Xm XXs  YYYY-MM-DD HH:MM:SS ★ BEST
 ========================================
 ```
 
 **Required fields:**
 1. **Epoch time in `Xm XXs` format** — always show elapsed time per epoch as minutes and seconds (e.g. `8m22s`), not raw seconds
-2. **`★ BEST` marker** — append ` ★ BEST` when the current epoch achieves a new best validation loss
+2. **Date/time stamp** — always include `time.strftime('%Y-%m-%d %H:%M:%S')` at epoch end so logs are self-documenting and finish times can be estimated
+3. **`★ BEST` marker** — append ` ★ BEST` when the current epoch achieves a new best validation loss
 
 These must be implemented via a `TrainerCallback` (or equivalent) that:
 - Tracks `best_val_loss = float("inf")` across epochs

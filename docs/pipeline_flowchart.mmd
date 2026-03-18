@@ -1,0 +1,55 @@
+flowchart TD
+    subgraph Data["📦 Data Sources"]
+        TA[train_audio\n~46K OGG focal clips]
+        TS[train_soundscapes\nfield recordings]
+        TSL[train_soundscapes_labels.csv\nexpert-annotated 5s segments]
+        TX[taxonomy.csv\n234 species]
+    end
+
+    subgraph Prep["⚙️ Preprocessing"]
+        FO[train_folds.csv\n5-fold stratified split]
+        TA --> FO
+        TX --> FO
+    end
+
+    subgraph Stage1["🏋️ Stage 1 — Supervised Training"]
+        DS[BirdTrainDataset\nMixUp · Aug · 20s chunks · BF16]
+        FO --> DS
+        DS --> M0[BirdSEDModel Fold 0\nEffNet-B0 + GEM + Conv1d att]
+        DS --> M1[BirdSEDModel Fold 1]
+        DS --> M2[BirdSEDModel Fold 2]
+        DS --> M3[BirdSEDModel Fold 3]
+        DS --> M4[BirdSEDModel Fold 4]
+    end
+
+    subgraph Eval["📊 Evaluation"]
+        ENS[5-fold Ensemble\nmean predictions]
+        M0 & M1 & M2 & M3 & M4 --> ENS
+        TSL --> EVAL[evaluate.py\nMacro ROC-AUC 0.7636]
+        ENS --> EVAL
+        EVAL --> HN[hard_species_stage1.txt\nworst-30 species]
+    end
+
+    subgraph Stage2["🔁 Stage 2 — Self-Training"]
+        PL[pseudo_label.py\nunlabeled soundscapes → soft labels]
+        ENS --> PL
+        TS --> PL
+        PL --> PLV[pseudo_labels_v1.csv\nconfidence-weighted]
+        PLV --> ST[self_train.py\nNoisy Student\nfocal 50% + pseudo 50%]
+        HN --> ST
+        ST --> ENS2[Larger Ensemble\n+ EffB3 · EffB4 · NFNet]
+    end
+
+    subgraph Submit["🚀 Kaggle Submission"]
+        NB[inference notebook\nPyTorch · CPU-only]
+        ENS --> NB
+        ENS2 --> NB
+        NB --> SUB[submission.csv\n234 species · ~7200 rows]
+    end
+
+    style Stage1 fill:#1a3a5c,stroke:#4a8abf,color:#fff
+    style Stage2 fill:#1a3a2a,stroke:#4abf6a,color:#fff
+    style Submit fill:#3a1a1a,stroke:#bf4a4a,color:#fff
+    style Eval fill:#2a2a1a,stroke:#bfbf4a,color:#fff
+    style Data fill:#2a1a3a,stroke:#9a4abf,color:#fff
+    style Prep fill:#1a2a3a,stroke:#4a7abf,color:#fff

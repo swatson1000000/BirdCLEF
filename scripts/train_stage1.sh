@@ -1,4 +1,4 @@
-#!/bin/bash
+number#!/bin/bash
 # Stage 1 training: 5 folds × 15 epochs, EfficientNet-B0, seed 42
 # Run with: nohup bash scripts/train_stage1.sh > log/train_stage1_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 

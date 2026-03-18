@@ -93,6 +93,8 @@ def main():
     parser.add_argument("--seed",     type=int, default=config.SEED)
     parser.add_argument("--folds",    default=None,
                         help="Comma-separated fold indices, e.g. '0,1,2,3,4'")
+    parser.add_argument("--version",  default=None,
+                        help="Model version suffix, e.g. '1' → sed_*_v1.pt (default: no suffix)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -113,8 +115,9 @@ def main():
 
     print("Loading checkpoints …")
     models = []
+    vsuffix = f"_v{args.version}" if args.version else ""
     for fold in fold_ids:
-        ckpt = config.MODELS / f"sed_{args.backbone}_fold{fold}_seed{args.seed}.pt"
+        ckpt = config.MODELS / f"sed_{args.backbone}_fold{fold}_seed{args.seed}{vsuffix}.pt"
         if not ckpt.exists():
             print(f"  [WARN] not found: {ckpt}")
             continue
