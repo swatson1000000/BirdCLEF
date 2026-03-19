@@ -628,17 +628,35 @@ clean_pseudo = pseudo_prob ** power  # e.g., power=1.5 → sharpens confident, k
 Repeat self-training with progressively better teachers:
 
 ```
-Stage 1 → Pseudo-labels v1 → Self-train iteration 1 → Pseudo-labels v2 → Self-train iter 2 → ...
+Stage 1 → Pseudo-labels v1 → Self-train iter 2 (EffB0-v2) → Pseudo-labels v2 → Self-train iter 3 (EffB0-v3 + RegNetY016-v1) → ...
 ```
 
-| Iteration | Power transform | Add backbones | Expected score boost |
-|-----------|----------------|---------------|---------------------|
-| 1 | 1.0 (raw) | EffB0, RegNetY008 | +3–4 pts |
-| 2 | 1.0 / 0.65 | + EffB3, RegNetY016 | +1 pt |
-| 3 | 1.0 / 0.55 | + EffB4, ECA-NFNet | +0.9 pt |
-| 4 | 1.0 / 0.60 | Same | +0.3 pt |
+> **Actual iteration numbering** (our codebase uses `--version` to track checkpoint generations):
+> - Stage 1 = supervised EffB0 (stored in `models/stage1/`)
+> - Iter 2 = self-train on pseudo_labels_v1, power=1.5 → `_v2.pt` — **done, LB=0.762**
+> - Iter 3 = self-train on pseudo_labels_v2, power=1.5 → `_v3.pt` (EffB0) + `_v1.pt` (RegNetY016) — **in progress**
+
+| Iteration | Pseudo CSV | Power | Backbones | Script | Status |
+|-----------|-----------|-------|-----------|--------|--------|
+| 2 | v1 | 1.5 | EffB0 (×5 folds) | `self_train_stage2.sh` | ✅ Done — LB 0.762 |
+| 3 | v2 | 1.5 | EffB0-v3 (×5) + RegNetY016-v1 (×5) | `self_train_stage3.sh` | 🔄 Pseudo-labels v2 generating now |
+| 4 | v3 | 1.5 | EffB0-v4 + RegNetY016-v2 + (EffB3?) | TBD | ⏳ Pending |
 
 **Decision gate**: Check LB before iteration 5. If no improvement → stop.
+
+### 3.0 Stage 3 Script (`scripts/self_train_stage3.sh`)
+
+Two-pass script: runs EffB0 v3 first (warm-started from v2), then RegNetY-016 v1 (fresh init). Both use `pseudo_labels_v2.csv` with `power=1.5`.
+
+```bash
+# Launch after pseudo_labels_v2.csv is ready:
+nohup bash /home/swatson/work/MachineLearning/kaggle/BirdCLEF/scripts/self_train_stage3.sh \
+  > /home/swatson/work/MachineLearning/kaggle/BirdCLEF/log/self_train_stage3_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+```
+
+Estimated runtime: ~26 hours (2 backbones × 5 folds × ~2.5 h/fold).
+
+**Note on `pseudo_label.py`**: added `--ckpt-version` flag to load versioned checkpoints (e.g., `--ckpt-version 2` loads `_v2.pt` files). Use `--version N` for the output CSV version.
 
 ### 3.1 Dedicated Insecta/Amphibia Model
 
