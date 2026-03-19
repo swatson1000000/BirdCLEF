@@ -13,8 +13,8 @@
 
 | Item | Value |
 |------|-------|
-| Best Kaggle LB score | 0.590 (Perch zero-shot baseline, 2026-03-16) |
-| Best local val ROC-AUC | 0.7408 (Stage 1 SED EfficientNet-B0, 5-fold mean, 2026-03-16) |
+| Best Kaggle LB score | 0.762 (SED EffB0 Self-Train v2, 2026-03-19) |
+| Best local val ROC-AUC | 0.7858 (Self-Train v2 ensemble, 2026-03-19) |
 | Architecture | SED — EfficientNet-B0 + GEM pool + Conv1d attention |
 | Training script | src/train.py, scripts/train_stage1.sh |
 | Model dataset | `stevewatson999/birdclef2026-models` (to create) |
@@ -803,6 +803,7 @@ Each training run creates:
 | `Perch_baseline` | Google Perch | 0.5 | — | 0.590 | Zero-shot, 158/234 species mapped, 2026-03-16 |
 | `SED_B0_Stage1` | EfficientNet-B0 | 1 | 0.7408 (mean) | 0.752 | Fold scores: F0=0.7601 F1=0.7500 F2=0.7295 F3=0.7339 F4=0.7305; 15 epochs BF16, 2026-03-16 |
 | `SED_B0_SelfTrain1` | EfficientNet-B0 | 2 | 0.8395 (ensemble) | 0.751 | Fold best: F0=0.8252 F1=0.8310 F2=0.8283 F3=0.8263 F4=0.8246; 30 epochs Noisy Student, power=1.0, 2026-03-17. **Val inflated by leakage** — all 66 val files were in pseudo-label training data. Fixed in v2: exclude val files from pseudo dataset. |
+| `Bird_0.762` | EfficientNet-B0 | 2 (v2) | 0.7858 (ensemble) | 0.762 | Fold best: F0=0.7635 F1=0.7811 F2=0.7702 F3=0.7731 F4=0.7545; 30 epochs, power=1.5, val leakage fixed (792 rows excluded), 2026-03-19 |
 
 ### Git Tag Conventions
 ```bash
