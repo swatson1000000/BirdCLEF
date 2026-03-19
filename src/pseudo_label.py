@@ -129,6 +129,8 @@ def main():
                         help="Comma-separated fold indices, e.g. '0,1,2,3,4'")
     parser.add_argument("--version",  type=int, default=1,
                         help="Output version suffix (default: 1 → pseudo_labels_v1.csv)")
+    parser.add_argument("--ckpt-version", default=None,
+                        help="Checkpoint version suffix, e.g. '2' → sed_*_v2.pt (default: no suffix)")
     parser.add_argument("--output",   default=None,
                         help="Override output path (default: data/processed/pseudo_labels_vN.csv)")
     args = parser.parse_args()
@@ -152,8 +154,9 @@ def main():
 
     print("Loading checkpoints …")
     models = []
+    vsuffix = f"_v{args.ckpt_version}" if args.ckpt_version else ""
     for fold in fold_ids:
-        ckpt = config.MODELS / f"sed_{args.backbone}_fold{fold}_seed{args.seed}.pt"
+        ckpt = config.MODELS / f"sed_{args.backbone}_fold{fold}_seed{args.seed}{vsuffix}.pt"
         if not ckpt.exists():
             print(f"  [WARN] not found: {ckpt}")
             continue
