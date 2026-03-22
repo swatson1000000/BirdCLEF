@@ -39,9 +39,9 @@ N_SEGS_PER_WINDOW = WINDOW_SEC // STRIDE_SEC   # 4 sub-segments per window
 
 # ── Model helpers ──────────────────────────────────────────────────────────────
 
-def load_model(checkpoint_path: Path, device: torch.device) -> BirdSEDModel:
+def load_model(checkpoint_path: Path, device: torch.device, backbone_name: str = None) -> BirdSEDModel:
     model = BirdSEDModel(
-        backbone_name=config.BACKBONE,
+        backbone_name=backbone_name or config.BACKBONE,
         n_classes=config.N_CLASSES,
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
@@ -160,7 +160,7 @@ def main():
         if not ckpt.exists():
             print(f"  [WARN] not found: {ckpt}")
             continue
-        m = load_model(ckpt, device)
+        m = load_model(ckpt, device, backbone_name=args.backbone)
         models.append(m)
         print(f"  fold {fold} loaded ✓")
     assert models, "No checkpoints found — check --backbone, --seed, --folds args"

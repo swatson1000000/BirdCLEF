@@ -13,8 +13,8 @@
 
 | Item | Value |
 |------|-------|
-| Best Kaggle LB score | 0.762 (SED EffB0 Self-Train v2, 2026-03-19) |
-| Best local val ROC-AUC | 0.7858 (Self-Train v2 ensemble, 2026-03-19) |
+| Best Kaggle LB score | 0.769 (Iter 4 EffB0-v4+RegNetY-v2 warm-start, 2026-03-21) |
+| Best local val ROC-AUC | 0.8148 (EffB0-v4 ensemble, 2026-03-21) |
 | Architecture | SED — EfficientNet-B0 + GEM pool + Conv1d attention |
 | Training script | src/train.py, scripts/train_stage1.sh |
 | Model dataset | `stevewatson999/birdclef2026-models` (to create) |
@@ -35,7 +35,7 @@
 7. [Phase 1 — Baseline SED Model (Supervised)](#phase-1--baseline-sed-model-supervised)
 8. [Phase 2 — Pseudo-Labeling & Noisy Student Self-Training](#phase-2--pseudo-labeling--noisy-student-self-training)
 9. [Phase 3 — Multi-Iterative Pseudo-Labeling](#phase-3--multi-iterative-pseudo-labeling)
-10. [Phase 4 — Ensemble & ONNX Export](#phase-4--ensemble--onnx-export)
+10. [Phase 4 — Ensemble & PyTorch Export](#phase-4--ensemble--pytorch-export)
 11. [Phase 5 — Kaggle Inference Notebook](#phase-5--kaggle-inference-notebook)
 12. [Inference Optimization Constraints](#inference-optimization-constraints)
 13. [Experiment Tracking](#experiment-tracking)
@@ -141,21 +141,18 @@ kaggle/BirdCLEF/
 │   ├── self_train.py              # Noisy Student self-training script
 │   ├── pseudo_label.py            # Generate pseudo-labels from soundscapes
 │   ├── ensemble.py                # Weighted average ensemble
-│   ├── export_onnx.py             # ONNX export for CPU inference
+│   ├── export_onnx.py             # (unused — ONNX not available on Kaggle)
 │   ├── evaluate.py                # Local ROC-AUC evaluation against train_soundscapes_labels.csv
 │   └── utils.py                   # Audio loading, mel spectrogram, padding helpers
 ├── scripts/
 │   ├── train_stage1.sh            # Run full 5-fold Stage 1 training
 │   ├── pseudo_label_soundscapes.sh
-│   ├── self_train_stage2.sh
-│   └── export_ensemble_onnx.sh
-├── models/                        # Saved model weights (gitignored)
+│   └── self_train_stage2.sh
+├── models/                        # Saved .pt checkpoints (gitignored)
 │   ├── stage1_effb0_fold0/
 │   │   ├── best.pth
 │   │   └── last.pth
-│   ├── ...
-│   └── ensemble_onnx/
-│       └── model.onnx
+│   └── ...
 ├── jupyter/
 │   └── birdclef2026-inference.ipynb   # Kaggle submission notebook
 ├── log/                           # nohup training logs (gitignored)
@@ -178,7 +175,7 @@ torchaudio >= 2.0
 timm >= 0.9            # EfficientNet, RegNetY, NFNet, EfficientViT backbones
 librosa >= 0.10        
 soundfile              # OGG loading
-onnxruntime            # CPU inference on Kaggle
+# onnxruntime NOT used — unavailable on Kaggle (no-internet env); use PyTorch .pt checkpoints
 pandas, numpy, scikit-learn
 torch-audiomentations  # GPU-accelerated PitchShift, TimeShift, AddBackgroundNoise
 tensorboard            # optional
@@ -187,7 +184,7 @@ tensorboard            # optional
 ### Hardware (local training)
 - NVIDIA GB10 (Blackwell, 128 GB unified memory, 273 GB/s LPDDR5X)
 - Training in **BF16** — BF16 delivers 92 TFLOPS (vs 46 TFLOPS FP32) and avoids NaN issues (unlike FP16). EfficientNet/RegNetY/NFNet are all safe under BF16. See `optimize.md` in the Akkadian project for full reference.
-- Inference ONNX on CPU (to match Kaggle constraint)
+- Inference PyTorch on CPU (ONNX not available on Kaggle — `onnxruntime` absent from no-internet env)
 
 #### GB10 PyTorch Boilerplate (include in every training script)
 ```python
@@ -210,7 +207,7 @@ for batch in loader:
     optimizer.step()
     optimizer.zero_grad()
 ```
-> **Note**: `torch.compile` is used during **training** for speed. For ONNX export, compile the model AFTER training; export the un-compiled weights. `torch.compile` and `torch.onnx.export` are incompatible in the same session.
+> **Note**: Do NOT use ONNX export — `onnxruntime` is unavailable in the Kaggle no-internet environment. Use `.pt` checkpoints with `torch.load(..., map_location="cpu")` for submission inference. `torch.compile` is also not supported (checkpoint portability issues).
 
 ### Script Execution Policy (per CLAUDE.md)
 All training runs use `nohup` with timestamped logs:
@@ -639,7 +636,7 @@ Stage 1 → Pseudo-labels v1 → Self-train iter 2 (EffB0-v2) → Pseudo-labels 
 | Iteration | Pseudo CSV | Power | Backbones | Script | Status |
 |-----------|-----------|-------|-----------|--------|--------|
 | 2 | v1 | 1.5 | EffB0 (×5 folds) | `self_train_stage2.sh` | ✅ Done — LB 0.762 |
-| 3 | v2 | 1.5 | EffB0-v3 (×5) + RegNetY016-v1 (×5) | `self_train_stage3.sh` | 🔄 Pseudo-labels v2 generating now |
+| 3 | v2 | 1.5 | EffB0-v3 (×5) + RegNetY016-v1 (×5) | `self_train_stage3.sh` | 🔄 In progress — `train_and_push.sh` running (2026-03-19) |
 | 4 | v3 | 1.5 | EffB0-v4 + RegNetY016-v2 + (EffB3?) | TBD | ⏳ Pending |
 
 **Decision gate**: Check LB before iteration 5. If no improvement → stop.
@@ -670,7 +667,7 @@ Train a **separate model** using Xeno-canto data for expanded Insecta/Amphibia s
 
 ---
 
-## Phase 4 — Ensemble & ONNX Export
+## Phase 4 — Ensemble & PyTorch Export
 
 ### 4.1 Final Ensemble Composition
 Based on BirdCLEF 2025 winner strategy (7 models):
@@ -694,28 +691,20 @@ Before ensembling across architectures, average checkpoint weights within the sa
 # → single checkpoint with better generalization than any individual epoch
 ```
 
-### 4.3 ONNX Export (`src/export_onnx.py`)
+### 4.3 PyTorch Export (`.pt` checkpoints)
 
-```bash
-python src/export_onnx.py \
-    --models models/stage1_effb0_fold0/best.pth \
-             models/stage2_effb3/best.pth \
-             ... \
-    --output models/ensemble_onnx/
-```
+**ONNX is NOT usable on Kaggle** — `onnxruntime` is absent from the no-internet competition environment. Use `.pt` checkpoints loaded with PyTorch directly:
 
-ONNX export makes CPU inference 2–3× faster vs native PyTorch:
 ```python
-# Export each model to ONNX (no quantization — quantization may hurt accuracy)
-torch.onnx.export(
-    model,
-    dummy_input,      # (1, 3, 224, 512)
-    output_path,
-    dynamic_axes={"input": {0: "batch_size"}}
-)
+model = BirdSEDModel(backbone=BACKBONE, num_classes=NUM_CLASSES)
+checkpoint = torch.load(ckpt_path, map_location="cpu")
+model.load_state_dict(checkpoint["model_state_dict"])
+model.eval()
 ```
 
-**Note**: `torch.compile` is safe for inference but NOT compatible with ONNX export pathway. Use ONNX for Kaggle CPU inference.
+PyTorch CPU inference fits comfortably within the 90-min budget for a 5-fold EffB0 + 5-fold RegNetY ensemble.
+
+**Note**: Do NOT use `torch.compile` — it breaks checkpoint portability across environments.
 
 ---
 
@@ -859,7 +848,7 @@ This pattern is validated from the Akkadian project where `Byt5_27.5` tags made 
 | **WeightedRandomSampler for pseudo-labels** | Stabilizes training, boosts LB | Weight by sum of max probabilities per soundscape |
 | **Stochastic Depth (drop_path=0.15)** | +0.005 LB in self-training only | Enable only during self-training, not Stage 1 |
 | **Ensemble from diverse stages** | +1–2 pts vs single-stage ensemble | Include Stage 1 model in final ensemble |
-| **ONNX export 2–3× faster CPU** | Essential for 90-min constraint | Always export to ONNX for submission |
+| **ONNX export: DO NOT USE** | `onnxruntime` unavailable on Kaggle (no-internet env) | Use `.pt` checkpoints + PyTorch CPU inference instead |
 | **EfficientViT-b0 for inference** | 5 folds in 40 min on CPU (2024 3rd place) | Use `efficientvit_b0.r224_in1k` to fit more models in 90-min budget |
 | **OpenVINO: skip** | ~2× faster but −0.01 accuracy drop; eca_nfnet fails | Use ONNX only |
 | **Spectrogram reuse across models** | ~50% inference speed gain | Compute mel once, feed to all models |
@@ -881,9 +870,9 @@ This pattern is validated from the Akkadian project where `Byt5_27.5` tags made 
 
 ```
 NEVER submit GPU-dependent code       → GPU runs for only 1 minute on Kaggle
-NEVER skip ONNX export                → PyTorch too slow for 90-min CPU limit
+NEVER use ONNX export                 → `onnxruntime` unavailable on Kaggle (no-internet); use PyTorch `.pt` checkpoints
 NEVER use FP16                        → NaN risk; use BF16 (safe for EfficientNet/RegNetY/NFNet)
-NEVER use torch.compile during ONNX export → Incompatible; export from un-compiled model
+NEVER use torch.compile               → Incompatible with checkpoint portability across environments
 NEVER use OpenVINO                    → ~2× speedup but −0.01 accuracy; eca_nfnet_l0 fails conversion
 DO NOT randomly sample MixUp weight   → Fixed 0.5 is optimal (validated by 2025 winner)
 DO NOT add Stochastic Depth in Stage 1 → Only helps in self-training (Noisy Student)
@@ -961,9 +950,23 @@ Per-fold best val ROC-AUC: F0=0.8252 F1=0.8310 F2=0.8283 F3=0.8263 F4=0.8246
 **Ensemble val ROC-AUC: 0.8395** (Stage 1 was 0.7636, +0.076 gain).  
 **Gate**: Submit to Kaggle LB. Tag `SED_B0_SelfTrain1_<score>`.
 
-### #9 ⬜ — Multi-iterative pseudo-labeling (iterations 2–4)
+### #9 🔄 — Multi-iterative pseudo-labeling (iterations 2–4)
 Each iteration: generate new pseudo-labels → apply power transform → retrain with larger models  
 **Gate after each**: submit to LB, check improvement. Stop when delta < 0.001.
+
+- ✅ **Iteration 2** (EffB0-v2, pseudo_labels_v1, power=1.5, leakage fixed): val=0.7858, **LB=0.762** — *Done 2026-03-19* (`Bird_0.762`)
+- ✅ **Pseudo-labels v2 generated**: 127,104 segments, `data/processed/pseudo_labels_v2.csv` — *Done 2026-03-19*
+- ✅ **Iteration 3** (EffB0-v3 + RegNetY016-v1, pseudo_labels_v2, power=1.5): val≈0.7899 (EffB0), **LB=0.762** — *Done 2026-03-20*
+  - EffB0-v3 (warm-start from v2): fold0=0.7845, fold1=0.8038, fold2=0.7821, fold3=0.8004, fold4=0.7788 → avg **0.7899**
+  - RegNetY016-v1 (fresh init): fold0=0.7401, fold1=0.7564, fold2=0.7544, fold3/4 pending → avg ~**0.750** (gap ~0.040 vs EffB0)
+  - **Root cause**: RegNetY is training from scratch in Pass 2 while EffB0 had 3 warm-start generations (v1→v2→v3). Options for remediation:
+    - **Option A (Warm-start RegNetY)**: For Iter 4, initialise RegNetY from its Stage 1 v1 checkpoints (`models/sed_regnety_016.tv2_in1k_fold*_seed42_v1.pt`) rather than from scratch, giving it the same warm-start advantage. Expected: close the ~0.04 gap.
+    - **Option B (Different architecture)**: Replace RegNetY with EfficientNet-B3 or another larger backbone for Iter 4. EffNetB3 is ~2× the parameters of B0 with ~1.5× inference cost; likely outperforms RegNetY at same training budget.
+- ✅ **Iteration 4** (Option A — warm-start RegNetY): **LB=0.769** — *Done 2026-03-21*
+  - EffB0-v4: warm-start from v3, 20 epochs → fold avg **0.7958** (local val)
+  - RegNetY016-v2: **warm-start from v1** (Option A), 20 epochs → fold avg **0.7758** (local val)
+  - pseudo_labels_v3.csv: 10-model average of EffB0-v3 + RegNetY016-v1
+  - **+0.007 over Iter 3** (0.762 → 0.769) — warm-starting RegNetY closed the gap and improved the ensemble
 
 ### #10 ⬜ — Dedicated Insecta/Amphibia Model
 Train on expanded Xeno-canto insect/amphibian data with hard negative emphasis

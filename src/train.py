@@ -15,7 +15,6 @@ import argparse
 import random
 import sys
 import time
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -30,11 +29,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Suppress benign hardware/version mismatch warning on GB10 (sm_121 > PyTorch max sm_120)
-warnings.filterwarnings(
-    "ignore",
-    message="Found GPU.*cuda capability.*Minimum and Maximum cuda capability",
-    category=UserWarning,
-)
+# (warning filters are set globally in config.py)
 
 import config
 from config import (

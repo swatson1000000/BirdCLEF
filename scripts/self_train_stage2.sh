@@ -13,8 +13,9 @@ PYTHON=/home/swatson/miniconda3/envs/kaggle/bin/python
 BACKBONE="tf_efficientnet_b0.ns_jft_in1k"
 EPOCHS=30
 SEED=42
-VERSION=1
+VERSION=2
 PSEUDO_CSV="$ROOT/data/processed/pseudo_labels_v1.csv"
+PSEUDO_POWER=1.5
 
 cd "$ROOT"
 
@@ -24,7 +25,7 @@ echo "========================================="
 echo "BirdCLEF+ 2026 — Self-Training Stage 2"
 echo "Backbone : $BACKBONE"
 echo "Epochs   : $EPOCHS   Seed: $SEED"
-echo "Pseudo   : $PSEUDO_CSV"
+echo "Pseudo   : $PSEUDO_CSV  (power=$PSEUDO_POWER)"
 echo "Started  : $(date)"
 echo "========================================="
 
@@ -38,7 +39,7 @@ for FOLD in 0 1 2 3 4; do
         --epochs       "$EPOCHS" \
         --seed         "$SEED" \
         --pseudo-csv   "$PSEUDO_CSV" \
-        --pseudo-power 1.0 \
+        --pseudo-power "$PSEUDO_POWER" \
         --init-ckpt    "$INIT_CKPT" \
         --version      "$VERSION" \
         2>&1 | tee "$ROOT/log/self_train_fold${FOLD}_$(date +%Y%m%d_%H%M%S).log"

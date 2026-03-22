@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import timm
 
-import config
+import config  # sets global warning filters
 
 
 class GEMFrequencyPool(nn.Module):
@@ -53,15 +53,13 @@ class BirdSEDModel(nn.Module):
     ):
         super().__init__()
 
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Unexpected keys.*found while loading pretrained weights")
-            self.backbone = timm.create_model(
-                backbone_name,
-                pretrained=True,
-                features_only=True,
-                out_indices=(4,),
-                in_chans=in_channels,
-            )
+        self.backbone = timm.create_model(
+            backbone_name,
+            pretrained=True,
+            features_only=True,
+            out_indices=(4,),
+            in_chans=in_channels,
+        )
 
         # Infer backbone output channel count via one dummy forward pass
         with torch.no_grad():

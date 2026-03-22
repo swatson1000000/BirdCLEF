@@ -5,18 +5,11 @@ applyTo: "src/export_onnx.py, jupyter/**"
 
 # Inference & ONNX Export Guidelines
 
-## ONNX Export
+## Inference Format
 
-- Export each fold's model to ONNX for CPU inference — **no quantization**
-- `dynamic_axes={"input": {0: "batch_size"}}` for variable batch size
-- **Never export a `torch.compile()`'d model** — load checkpoint → create fresh model → export
-- `eca_nfnet_l0` backbone fails ONNX conversion — use a different backbone
-
-## OpenVINO
-
-- OpenVINO is ~2× faster than ONNX on CPU but causes ~0.01 ROC-AUC drop
-- `eca_nfnet_l0` also fails OpenVINO conversion
-- Default to ONNX unless inference time is the bottleneck
+- **Use PyTorch CPU inference directly** — `onnxruntime` is not available in the Kaggle no-internet environment
+- Load `.pt` checkpoints on CPU with `map_location="cpu"` — no ONNX or OpenVINO
+- Run model in `eval()` + `torch.no_grad()` + `torch.inference_mode()`
 
 ## Sliding Window Inference
 

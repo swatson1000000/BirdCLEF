@@ -1,7 +1,22 @@
 """Central configuration for BirdCLEF+ 2026."""
 
+import warnings
 from functools import lru_cache
 from pathlib import Path
+
+# Suppress known-benign warnings that clutter logs on this hardware.
+# GB10 is CUDA 12.1; PyTorch max is 12.0 — still runs fine.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Found GPU.*cuda capability.*Minimum and Maximum cuda capability",
+    category=UserWarning,
+)
+# timm emits this when head keys are absent in a features_only backbone.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Unexpected keys.*found while loading pretrained weights",
+    category=UserWarning,
+)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 ROOT   = Path("/home/swatson/work/MachineLearning/kaggle/BirdCLEF")

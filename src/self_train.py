@@ -18,7 +18,6 @@ import argparse
 import random
 import sys
 import time
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -31,11 +30,7 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-warnings.filterwarnings(
-    "ignore",
-    message="Found GPU.*cuda capability.*Minimum and Maximum cuda capability",
-    category=UserWarning,
-)
+# (warning filters are set globally in config.py)
 
 import config
 from config import (

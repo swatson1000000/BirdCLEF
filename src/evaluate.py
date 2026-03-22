@@ -31,9 +31,9 @@ from utils import load_audio, pad_or_crop, waveform_to_mel
 
 # ── Model helpers ──────────────────────────────────────────────────────────────
 
-def load_model(checkpoint_path: Path, device: torch.device) -> BirdSEDModel:
+def load_model(checkpoint_path: Path, device: torch.device, backbone_name: str = None) -> BirdSEDModel:
     model = BirdSEDModel(
-        backbone_name=config.BACKBONE,
+        backbone_name=backbone_name or config.BACKBONE,
         n_classes=config.N_CLASSES,
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
@@ -121,7 +121,7 @@ def main():
         if not ckpt.exists():
             print(f"  [WARN] not found: {ckpt}")
             continue
-        m = load_model(ckpt, device)
+        m = load_model(ckpt, device, backbone_name=args.backbone)
         models.append(m)
         print(f"  fold {fold} loaded ✓")
     assert models, "No checkpoints found — check backbone/seed/fold args"
@@ -185,8 +185,10 @@ def main():
     macro_auc   = float(np.mean(list(per_species_auc.values())))
     n_evaluated = len(per_species_auc)
 
+    vsuffix = f"_v{args.version}" if args.version else ""
+    label = f"{args.backbone}{vsuffix}"
     print(f"\n{'='*56}")
-    print(f"Stage 1 Ensemble — Macro ROC-AUC: {macro_auc:.4f}")
+    print(f"Ensemble [{label}] — Macro ROC-AUC: {macro_auc:.4f}")
     print(f"Evaluated: {n_evaluated}/{n_classes} species  (skipped {skipped} with no positive labels)")
     print(f"{'='*56}")
 

@@ -35,7 +35,8 @@ tail -f log/<script>_*.log
 - **Insect sonotypes** (e.g., `47158son16`) are valid class labels — treat as unique species
 - **Secondary labels**: mask their loss to 0 (not 0.5) — location within clip is unknown
 - **iNat clips**: no quality filter; XC clips: prefer rating ≥ 3.5
-- **`torch.compile` + ONNX export** are incompatible — export un-compiled weights
+- **ONNX not usable on Kaggle** — `onnxruntime` is unavailable in the no-internet environment; use PyTorch CPU inference (`.pt` checkpoints, `map_location="cpu"`)
+- **`torch.compile`** — do not use; incompatible with checkpoint portability
 - **BF16** does not need `GradScaler`
 - **Shell scripts**: always use absolute paths
 - **Logs**: clean `log/train_*.log` before each new training run
