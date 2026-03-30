@@ -13,9 +13,9 @@
 
 | Item | Value |
 |------|-------|
-| Best Kaggle LB score | **0.773** (PCEN v13 5-fold + temporal smoothing, 2026-03-29) |
+| Best Kaggle LB score | **0.908** (Perch v2 + LogReg probes + site/hour priors, 2026-03-30) |
 | Best local val ROC-AUC | 0.7958 (EffB0-v4 soundscape val) |
-| Currently running | **#16 post-processing** — temporal smoothing validated (+0.008 LB). Next: apply smoothing to 0.769 log-mel notebook, build combined ensemble. |
+| Currently running | **#20b next** — Perch v2 scored **0.908 LB** ✅. Next: SED+Perch ensemble. |
 | Architecture | SED — EfficientNet-B0/B3 + GEM pool + Conv1d attention |
 | Loss | **BCE** (production, validated); ASL incompatible with BCE warm-start (v10/v11/v12 all failed) |
 | Spectrogram | **PCEN** (v8 test) / AmplitudeToDB+min-max (production v17 notebook) |
@@ -44,7 +44,8 @@
 | Mar 28 | PCEN self-train v14 (EffB0, PCEN, BCE, warm-start v13, 30ep, PCEN pseudo-labels) | 0.7494 local val (ep12), **0.749 LB** ❌ | Self-train with PCEN pseudo-labels degraded LB vs v13 (0.762→0.749); PCEN pseudo-labels adding noise |
 | Mar 29 | PCEN 5-fold self-train v15 (EffB0, PCEN, BCE, warm-start v13, 30ep, 5-fold PCEN pseudo-labels) | 0.7259 best fold val, **0.754 LB** ❌ | 5-fold self-train STILL degrades vs single-fold v13 (0.762). Self-train is net negative for PCEN. |
 | Mar 29 | PCEN 5-fold Stage 1 v13 (EffB0, PCEN, BCE, scratch, 25ep, focal-only) | **0.765 LB** | 5-fold no-self-train > v15 (0.754) but < best 0.769. Self-train confirmed harmful; PCEN needs ensemble diversity to compete. |
-| Mar 29 | PCEN v13 5-fold + temporal smoothing (gaussian sigma=1) | **0.773 LB** ✅ | **New best.** Smoothing added +0.008 over v13 baseline (0.765). First time beating 0.769. |
+| Mar 29 | PCEN v13 5-fold + temporal smoothing (gaussian sigma=1) | **0.773 LB** ✅ | Smoothing added +0.008 over v13 baseline (0.765). First time beating 0.769. |
+| Mar 30 | Perch v2 + LogReg probes + site/hour priors + dual smoothing + temp scaling | **0.908 LB** ✅ | **New best.** Adapted from public 0.908 notebook. No local training — all inference-time sklearn. Massive jump from 0.773. |
 
 ### LB Gap Analysis (2026-03-24)
 | Approach | LB score | Delta vs ours |
@@ -1467,9 +1468,35 @@ Regenerate `pseudo_labels_pcen_v3.csv` from the best v16/v17/v18 ensemble, run a
 
 **Key**: Always use the full 5-fold ensemble for pseudo-label generation. Never single-fold (lesson from v14).
 
-### #20 ⬜ — Perch Integration v2 (NEW — see dedicated section below)
+### #20 🔄 — Perch Inference Notebook (adapted from public 0.908 notebook)
 
-Perch MLP failed as a standalone model (0.90 local → 0.49 LB) and as a direct KD teacher (catastrophic forgetting). But Perch embeddings are genuinely powerful — they just need a different integration strategy. See [Perch Integration v2](#perch-integration-v2--new-approach) below for the full plan.
+**Previous Perch attempts (MLP probe, KD) all failed.** The breakthrough was studying the public 0.908 notebook (`yashanathaniel/birdclef-2026-perch-v2-0-908`) which uses a completely different approach:
+
+**Architecture**: No deep learning. Perch v2 frozen SavedModel → raw logits + 1536-d embeddings → Bayesian site+hour priors → sklearn LogReg probes → dual temporal smoothing → temperature scaling.
+
+**Key insights we were missing:**
+1. **Use raw Perch logits directly** (not just embeddings) — logits are already species-discriminative
+2. **Site + hour-of-day Bayesian priors** from `train_soundscapes_labels.csv` — huge signal (species are location/time-dependent)
+3. **LogReg probes on soundscape data** (not MLP on focal clips) — trains on the same domain as test data
+4. **Genus proxy** for unmapped amphibians — max logit across genus matches in Perch's label list
+5. **Class-specific smoothing** — avg-neighbor for texture classes (frogs/insects, alpha=0.35), local-max for event classes (birds, alpha=0.15)
+6. **Temperature scaling** (T=1.15) — better calibration for rare classes in macro-averaged ROC-AUC
+
+**No local training required.** Everything runs at inference time on Kaggle CPU:
+- Perch v2 SavedModel: frozen Google model (public Kaggle model)
+- LogReg probes: fit on ~708 labeled soundscape windows (seconds with sklearn)
+- Site/hour priors: computed from `train_soundscapes_labels.csv`
+- PCA: fit on cached embeddings
+
+**Notebook**: `jupyter/perch/birdclef2026-perch-inference.ipynb` → pushed as `stevewatson999/birdclef-2026-perch-inference` v1.
+
+**Data sources** (all public, no local models needed):
+- `google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1` (Perch v2)
+- `jaejohn/perch-meta` (pre-cached embeddings, optional)
+- `kdmitrie/bc26-tensorflow-2-20-0` (TF 2.20 wheel)
+- `birdclef-2026` (competition data)
+
+**Result**: **0.908 LB** ✅ — confirmed. Proceed to SED+Perch ensemble (#20b).
 
 ### #21 ⬜ — EffB3 Warm-Start (after PCEN pipeline stabilizes at LB >= 0.780)
 
@@ -1477,18 +1504,15 @@ Train `tf_efficientnet_b3.ns_jft_in1k` with the validated PCEN config, warm-star
 
 Ensemble: 5×EffB0-vN + 5×EffB3-v2 (10 models). Expected: +0.01–0.02 from architecture diversity.
 
-### Revised Timeline (2026-03-28)
+### Revised Timeline (2026-03-29)
 | Date | Action | Expected LB |
 |------|--------|-------------|
-| Mar 28–29 | #15i completes (PCEN 5-fold Stage 1 + self-train v15) | ~0.785–0.800 |
-| Mar 29 | #16A: Temporal smoothing in notebook (parallel) | +0.01–0.02 |
-| Mar 30–31 | #17A: Freq-MixStyle ablation (v16) | +0.01–0.03 |
-| Apr 1–2 | #17B: Dual loss ablation (v17) | +0.005 |
-| Apr 2–3 | #17C: Model soup (v18) | +0.005–0.01 |
-| Apr 4–5 | #19: Pseudo-label regen + iteration (v19) | +0.005–0.01 |
-| Apr 6–10 | #20: Perch integration v2 (feature concat or attention fusion) | +0.03–0.06 |
-| Apr 11–13 | #21: EffB3 warm-start (v20) | +0.01–0.02 |
-| Apr 14+ | Iterate, tune, submit | **Target: 0.85–0.90** |
+| Mar 29 ✅ | #15i: PCEN 5-fold v15 self-train → 0.754 ❌; v13 5-fold → 0.765; v13+smoothing → **0.773** ✅ | 0.773 |
+| Mar 29 🔄 | #20: Perch inference notebook (adapted 0.908 approach) — pushed v1 | ~0.905–0.910 |
+| Mar 30 | #20b: SED (0.773) + Perch (~0.908) ensemble notebook | **~0.91–0.92** |
+| Mar 30–31 | Iterate: tune ensemble weights, add more post-processing | +0.005–0.01 |
+| Apr 1–3 | #17: SED ablations (Freq-MixStyle, model soup, circ-shift) to improve SED component | +0.01–0.03 on SED |
+| Apr 4–7 | Retrain SED with improvements → better ensemble | **Target: 0.92+** |
 | May 27 | Entry deadline | Best submission locked |
 | Jun 3 | Final submission deadline | — |
 

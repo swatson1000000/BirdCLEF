@@ -1,0 +1,23 @@
+{
+  "id": "stevewatson999/birdclef-2026-perch-inference",
+  "title": "BirdCLEF 2026 Perch Inference",
+  "code_file": "birdclef2026-perch-inference.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "jaejohn/perch-meta"
+  ],
+  "competition_sources": [
+    "birdclef-2026"
+  ],
+  "kernel_sources": [
+    "kdmitrie/bc26-tensorflow-2-20-0"
+  ],
+  "model_sources": [
+    "google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1"
+  ]
+}
