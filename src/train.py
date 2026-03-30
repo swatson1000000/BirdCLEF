@@ -137,7 +137,7 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def train_one_fold(fold: int, backbone: str, epochs: int, seed: int) -> None:
+def train_one_fold(fold: int, backbone: str, epochs: int, seed: int, version: "int | None" = None) -> None:
     set_seed(seed)
 
     device = torch.device("cuda")
@@ -194,7 +194,8 @@ def train_one_fold(fold: int, backbone: str, epochs: int, seed: int) -> None:
     bce_fn       = nn.BCEWithLogitsLoss(reduction="none")
 
     MODELS.mkdir(parents=True, exist_ok=True)
-    save_path = MODELS / f"sed_{backbone}_fold{fold}_seed{seed}.pt"
+    vtag = f"_v{version}" if version is not None else ""
+    save_path = MODELS / f"sed_{backbone}_fold{fold}_seed{seed}{vtag}.pt"
 
     # ── Training loop ─────────────────────────────────────────────────────────
     best_auc = 0.0
@@ -248,7 +249,8 @@ def train_one_fold(fold: int, backbone: str, epochs: int, seed: int) -> None:
             f"Epoch {epoch:2d}/{epochs}: "
             f"train_loss={avg_loss:.4f}  "
             f"val_roc_auc={val_auc:.4f}  "
-            f"time={mins}m {s:02d}s"
+            f"time={mins}m {s:02d}s  "
+            f"{time.strftime('%Y-%m-%d %H:%M:%S')}"
             f"{best_marker}"
         )
         print("=" * 40)
@@ -265,6 +267,8 @@ def main() -> None:
     parser.add_argument("--backbone", type=str, default=config.BACKBONE, help="timm backbone name")
     parser.add_argument("--epochs",   type=int, default=config.EPOCHS,  help="Number of epochs")
     parser.add_argument("--seed",     type=int, default=config.SEED,    help="Random seed")
+    parser.add_argument("--version",  type=int, default=None,
+                        help="Version tag for checkpoint filename (e.g. 13 → _v13)")
     args = parser.parse_args()
 
     train_one_fold(
@@ -272,6 +276,7 @@ def main() -> None:
         backbone=args.backbone,
         epochs=args.epochs,
         seed=args.seed,
+        version=args.version,
     )
 
 

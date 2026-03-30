@@ -25,6 +25,7 @@ nohup python -u src/<script>.py [args] > log/<script>_$(date +%Y%m%d_%H%M%S).log
 tail -f log/<script>_*.log
 ```
 
+- **NEVER use `conda run`** for scripts that write log files — it buffers stdout/stderr, leaving the log file empty while the process runs. Always use `conda activate kaggle` directly before `nohup`.
 - Core implementation in `.py` scripts only — **not** notebooks (notebooks are for Kaggle submission only)
 - Shell scripts in `scripts/` must use **absolute paths**
 

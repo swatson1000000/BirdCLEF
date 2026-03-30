@@ -2,6 +2,18 @@
 
 > Canonical execution policy is in `.github/copilot-instructions.md`. This file retains extended examples for reference.
 
+## ⚠️ ALWAYS Consult plan.md Before Any Action
+
+**Before suggesting or starting any training run, experiment, or code change, read `plan.md` first.**
+
+`plan.md` is the single source of truth for:
+- What has already been tried (LB Submission History, Experiment Log)
+- What is currently running (Current State table)
+- What to do next (Prioritized Action Plan, next `⬜` item)
+- Active gates and decision criteria (e.g. "fold-0 val ≥ 0.77 before 5-fold run")
+
+Never propose the next step from memory or inference alone — always verify against `plan.md`.
+
 ## Environment Setup
 
 ### Conda Environment
@@ -14,6 +26,20 @@ conda activate kaggle
 ## Python Script Execution Policy
 
 All Python scripts executed for this project **MUST** be run in the background using `nohup` with log files written to the project log directory. The `kaggle` conda environment must be active.
+
+### ⚠️ NEVER use `conda run` for scripts that write log files
+
+`conda run` buffers stdout/stderr internally — the log file will remain **empty** while the process runs, making monitoring impossible. Always activate the environment directly with `conda activate kaggle` before using `nohup`:
+
+```bash
+# ✅ CORRECT — log file receives output immediately
+conda activate kaggle
+cd /home/swatson/work/MachineLearning/kaggle/BirdCLEF
+nohup bash scripts/train_and_push_stage5.sh > log/train_and_push_stage5_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+
+# ❌ WRONG — log file stays empty; no way to monitor progress
+conda run -n kaggle nohup bash scripts/train_and_push_stage5.sh > log/....log 2>&1 &
+```
 
 ### Log Directory
 ```

@@ -53,6 +53,105 @@ except Exception:
 
 SEGMENT_SEC = 5   # pseudo-label window size matches competition metric window
 
+# Freq-MixStyle parameters
+FREQ_MIXSTYLE_PROB  = 0.5
+FREQ_MIXSTYLE_ALPHA = 0.1
+
+
+class AsymmetricLoss(nn.Module):
+    """Asymmetric Loss for multi-label classification.
+
+    Downweights easy negatives (γ−=4) while leaving positives unmodified
+    (γ+=0). The clip parameter shifts the hard-mining threshold by 0.05.
+    Expected gain over BCE: +0.02–0.03 soundscape val AUC.
+
+    Reference: "Asymmetric Loss For Multi-Label Classification"
+               (Ben-Baruch et al., 2021)
+    """
+
+    def __init__(
+        self,
+        gamma_neg: float = 4.0,
+        gamma_pos: float = 0.0,
+        clip: float = 0.05,
+        eps: float = 1e-8,
+    ):
+        super().__init__()
+        self.gamma_neg = gamma_neg
+        self.gamma_pos = gamma_pos
+        self.clip      = clip
+        self.eps       = eps
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """Per-element ASL. x: logits (..., C), y: targets (..., C) ∈ [0, 1]."""
+        # Cast to float32 for numerically stable loss — BF16 autocast can produce
+        # 0^0 = NaN via tensor.pow(tensor) path (exp(0*log(0)=nan)) when a confident
+        # positive prediction rounds xs_pos to exactly 1.0 and y=1 → gamma=0.
+        # Loss computation is cheap; backbone forward pass stays in BF16.
+        x = x.float()
+        y = y.float()
+
+        xs_pos = torch.sigmoid(x)
+        xs_neg = 1.0 - xs_pos
+
+        # Asymmetric probability clipping (shift hard-mining boundary)
+        if self.clip > 0:
+            xs_neg = (xs_neg + self.clip).clamp(max=1.0)
+
+        loss = (
+            y       * torch.log(xs_pos.clamp(min=self.eps)) +
+            (1 - y) * torch.log(xs_neg.clamp(min=self.eps))
+        )
+
+        # Asymmetric focusing.
+        # The focusing weight (1-pt)^gamma is treated as a CONSTANT multiplier
+        # (no gradient flows through it). This follows the official ASL paper
+        # implementation and avoids NaN gradients from 0^0 / 0^(fractional):
+        #   - torch.where backward leaks NaN gradient from unselected branch
+        #   - tensor.pow(tensor) at 0^ε computes exp(ε*log(0))=exp(-inf)=0 forward
+        #     but gradient is exp(-inf)*log(0)=0*(-inf)=nan backward
+        # Disabling grad here means only the log-probability terms are differentiated.
+        if self.gamma_neg > 0 or self.gamma_pos > 0:
+            with torch.no_grad():
+                pt    = xs_pos * y + xs_neg * (1 - y)
+                gamma = self.gamma_pos * y + self.gamma_neg * (1 - y)
+                focusing = torch.pow((1.0 - pt).clamp(min=1e-8), gamma)
+            loss *= focusing
+
+        return -loss
+
+
+def freq_mixstyle(
+    mels: torch.Tensor,
+    alpha: float = FREQ_MIXSTYLE_ALPHA,
+) -> torch.Tensor:
+    """Freq-MixStyle: mix per-frequency-bin mean/std across randomly paired samples.
+
+    mels: (B, 3, F, T) on GPU.
+    Simulates different ARU recording-device frequency responses.
+    Expected gain: +0.01–0.03 soundscape val AUC.
+    """
+    B = mels.size(0)
+    if B < 2:
+        return mels
+
+    # Per-frequency-bin statistics over time axis → (B, 3, F, 1)
+    mu  = mels.mean(dim=3, keepdim=True)
+    sig = mels.std(dim=3, keepdim=True).clamp(min=1e-7)
+
+    # Normalise to zero mean, unit std
+    x_norm = (mels - mu) / sig
+
+    # Random convex combination of (mu, sig) from a shuffled partner
+    lam  = torch.from_numpy(
+        np.random.beta(alpha, alpha, size=(B, 1, 1, 1)).astype(np.float32)
+    ).to(mels.device)
+    perm      = torch.randperm(B, device=mels.device)
+    mixed_mu  = lam * mu  + (1.0 - lam) * mu[perm]
+    mixed_sig = lam * sig + (1.0 - lam) * sig[perm]
+
+    return x_norm * mixed_sig + mixed_mu
+
 
 # ── Pseudo-label dataset ───────────────────────────────────────────────────────
 
@@ -133,6 +232,10 @@ class PseudoLabelDataset(Dataset):
         end_samp   = int(row["end_time"]   * SAMPLE_RATE)
         seg        = waveform[start_samp:end_samp]
         seg        = pad_or_crop(seg, CHUNK_SAMPLES, random_crop=self.augment)
+
+        if self.augment and random.random() < config.TIME_SHIFT_PROB:
+            shift = random.randint(-int(0.25 * CHUNK_SAMPLES), int(0.25 * CHUNK_SAMPLES))
+            seg   = np.roll(seg, shift)
 
         labels = self._probs[idx].copy()
 
@@ -246,7 +349,24 @@ def train_one_fold(
     pseudo_power: float,
     init_ckpt: "Path | None",
     version: int,
+    soup_start_ep: int = 10,
+    use_bce: bool = False,
+    asl_gamma_neg: float = 4.0,
+    use_freq_mixstyle: bool = True,
+    use_dual_loss: bool = True,
+    lr_schedule: str = "warm_restarts",
+    asl_focal_only: bool = False,
 ) -> None:
+    """Train one fold of the SED model.
+
+    use_bce           : use BCEWithLogitsLoss instead of ASL (simpler, diagnostic)
+    asl_gamma_neg     : gamma_neg for AsymmetricLoss (default 4.0; try 2.0 for softer suppression)
+    use_freq_mixstyle : apply Freq-MixStyle batch augmentation
+    use_dual_loss     : 50% clip-level + 50% frame-level loss; False = clip only
+    lr_schedule       : 'warm_restarts' (CosineAnnealingWarmRestarts, default for
+                        warm-start) or 'cosine' (CosineAnnealingLR single decay,
+                        recommended for from-scratch runs with changed features)
+    """
     set_seed(seed)
 
     device = torch.device("cuda")
@@ -330,27 +450,57 @@ def train_one_fold(
             state = state["model_state_dict"]
         model.load_state_dict(state)
         print(f"  Warm-started from {init_ckpt}")
+        # Fine-tuning from warm start: lower LR + single cosine decay (no restarts)
+        # NOTE: only valid when init checkpoint used the *same* input pipeline
+        # (e.g. log-mel → log-mel).  Mixing pipelines causes epoch-1 peak.
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=LR * 0.2, weight_decay=WEIGHT_DECAY
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=epochs, eta_min=LR_MIN
+        )
     else:
         print("  Training from scratch (no --init-ckpt provided)")
-
-    # Fine-tuning from warm start: lower LR + single cosine decay (no restarts)
-    ft_lr = LR * 0.2  # 1e-4 instead of 5e-4
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=ft_lr, weight_decay=WEIGHT_DECAY
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=epochs, eta_min=LR_MIN
-    )
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY
+        )
+        if lr_schedule == "cosine":
+            # Single cosine decay — recommended when feature pipeline changed
+            # (e.g. log-mel → PCEN).  Avoids repeated LR spikes that prevent
+            # convergence on an unfamiliar input distribution.
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=epochs, eta_min=LR_MIN
+            )
+            print("  LR schedule: CosineAnnealingLR (single decay)")
+        else:
+            # Default: warm restarts (same as Stage 1 train.py)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=T_0, eta_min=LR_MIN
+            )
+            print("  LR schedule: CosineAnnealingWarmRestarts (warm restarts)")
 
     autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-    bce_fn       = nn.BCEWithLogitsLoss(reduction="none")
+    if use_bce:
+        criterion = nn.BCEWithLogitsLoss(reduction="none")
+        print("  Loss: BCEWithLogitsLoss")
+    else:
+        criterion = AsymmetricLoss(gamma_neg=asl_gamma_neg, gamma_pos=0.0, clip=0.05)
+        print(f"  Loss: AsymmetricLoss (gamma_neg={asl_gamma_neg}, gamma_pos=0, clip=0.05)")
+    focal_asl_criterion = AsymmetricLoss(gamma_neg=asl_gamma_neg, gamma_pos=0.0, clip=0.05) if asl_focal_only else None
+    if asl_focal_only:
+        print(f"  ASL focal-only: ENABLED (gamma_neg={asl_gamma_neg}) — BCE for pseudo mixing only")
+    if not use_freq_mixstyle:
+        print("  Freq-MixStyle: DISABLED")
+    if not use_dual_loss:
+        print("  Dual loss: DISABLED (clip-only)")
 
     MODELS.mkdir(parents=True, exist_ok=True)
     save_path = MODELS / f"sed_{backbone}_fold{fold}_seed{seed}_v{version}.pt"
 
     # ── Training loop ──────────────────────────────────────────────────────────
-    best_auc    = 0.0
-    pseudo_iter = iter(pseudo_dl)
+    best_auc        = 0.0
+    pseudo_iter     = iter(pseudo_dl)
+    soup_ckpt_paths = []      # per-epoch checkpoints saved for model soup
 
     for epoch in range(1, epochs + 1):
         epoch_start  = time.time()
@@ -365,7 +515,19 @@ def train_one_fold(
                 pseudo_iter  = iter(pseudo_dl)
                 pseudo_batch = next(pseudo_iter)
 
-            mels, labels, sec_mask = noisy_student_mixup(focal_batch, pseudo_batch)
+            if asl_focal_only:
+                # Mix audio for Noisy Student regularization but compute ASL loss
+                # against focal labels only (avoids calibration conflict with
+                # soft BCE-generated pseudo-labels).
+                f_mel, f_labels, f_sec_mask = focal_batch
+                p_mel, _p_labels            = pseudo_batch
+                f_max = f_mel.abs().amax(dim=(1, 2, 3), keepdim=True).clamp(min=1e-8)
+                p_max = p_mel.abs().amax(dim=(1, 2, 3), keepdim=True).clamp(min=1e-8)
+                mels     = (0.5 * (f_mel / f_max) + 0.5 * (p_mel / p_max))
+                labels   = f_labels
+                sec_mask = f_sec_mask
+            else:
+                mels, labels, sec_mask = noisy_student_mixup(focal_batch, pseudo_batch)
 
             mels     = mels.to(device, non_blocking=True)
             labels   = labels.to(device, non_blocking=True)
@@ -377,12 +539,29 @@ def train_one_fold(
             if random.random() < SPEC_TIME_MASK_PROB:
                 mels = time_mask(mels)
 
+            # Freq-MixStyle (GPU) — mix per-freq-bin stats to simulate device diversity
+            if use_freq_mixstyle and random.random() < FREQ_MIXSTYLE_PROB:
+                mels = freq_mixstyle(mels)
+
             optimizer.zero_grad()
 
+            # Select loss criterion: focal-only ASL overrides the shared criterion
+            active_criterion = focal_asl_criterion if asl_focal_only else criterion
+
             with autocast_ctx:
-                out      = model(mels)
-                loss_per = bce_fn(out["clip_logits"], labels)
-                loss     = (loss_per * sec_mask).mean()
+                out = model(mels)
+
+                # Clip-level loss
+                clip_loss = (active_criterion(out["clip_logits"], labels) * sec_mask).mean()
+
+                if use_dual_loss:
+                    # Frame-level loss — broadcast clip labels to all time frames
+                    frame_labels = labels.unsqueeze(1).expand_as(out["frame_logits"])
+                    frame_mask   = sec_mask.unsqueeze(1).expand_as(out["frame_logits"])
+                    frame_loss   = (active_criterion(out["frame_logits"], frame_labels) * frame_mask).mean()
+                    loss = 0.5 * clip_loss + 0.5 * frame_loss
+                else:
+                    loss = clip_loss
 
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 5.0)
@@ -403,6 +582,12 @@ def train_one_fold(
             torch.save(model.state_dict(), save_path)
             best_marker = " ★ BEST"
 
+        # Save epoch checkpoint for model soup (post-warmup epochs only)
+        if soup_start_ep > 0 and epoch >= soup_start_ep:
+            soup_ep_path = MODELS / f"{save_path.stem}_ep{epoch}.pt"
+            torch.save(model.state_dict(), soup_ep_path)
+            soup_ckpt_paths.append(soup_ep_path)
+
         print("=" * 40)
         print(
             f"Epoch {epoch:2d}/{epochs}: "
@@ -414,8 +599,27 @@ def train_one_fold(
         )
         print("=" * 40)
 
+    # ── Model soup: average all post-warmup epoch checkpoints ─────────────────
+    if soup_ckpt_paths:
+        print(f"\nBuilding model soup from {len(soup_ckpt_paths)} epoch checkpoints …")
+        soup_state = None
+        for p in soup_ckpt_paths:
+            state = torch.load(p, map_location="cpu", weights_only=True)
+            if soup_state is None:
+                soup_state = {k: v.float() for k, v in state.items()}
+            else:
+                for k in soup_state:
+                    soup_state[k] += state[k].float()
+        for k in soup_state:
+            soup_state[k] /= len(soup_ckpt_paths)
+        soup_save_path = MODELS / f"{save_path.stem}_soup.pt"
+        torch.save(soup_state, soup_save_path)
+        print(f"Model soup saved ({len(soup_ckpt_paths)} checkpoints) → {soup_save_path}")
+        for p in soup_ckpt_paths:
+            p.unlink(missing_ok=True)
+
     print(f"\nFold {fold} complete. Best val ROC-AUC: {best_auc:.4f}")
-    print(f"Model saved → {save_path}")
+    print(f"Best-epoch model → {save_path}")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -433,6 +637,23 @@ def main() -> None:
                         help="Stage 1 checkpoint to warm-start from")
     parser.add_argument("--version",      type=int,   default=1,
                         help="Output filename version suffix (v1, v2 …)")
+    parser.add_argument("--soup-start-ep", type=int, default=10,
+                        help="Start saving epoch checkpoints for model soup after this epoch (0=disabled)")
+    parser.add_argument("--use-bce", action="store_true", default=False,
+                        help="Use BCEWithLogitsLoss instead of ASL (diagnostic/ablation)")
+    parser.add_argument("--asl-gamma-neg", type=float, default=4.0,
+                        help="gamma_neg for AsymmetricLoss (default 4.0; use 2.0 for softer suppression)")
+    parser.add_argument("--no-freq-mixstyle", action="store_true", default=False,
+                        help="Disable Freq-MixStyle augmentation (diagnostic/ablation)")
+    parser.add_argument("--no-dual-loss", action="store_true", default=False,
+                        help="Use clip-level loss only; disable frame-level dual loss")
+    parser.add_argument("--asl-focal-only", action="store_true", default=False,
+                        help="Apply ASL only to focal labels; pseudo used for audio mixing only "
+                             "(avoids calibration conflict with BCE-generated pseudo-labels)")
+    parser.add_argument("--lr-schedule", type=str, default="warm_restarts",
+                        choices=["warm_restarts", "cosine"],
+                        help="LR scheduler: warm_restarts (default) or cosine (single decay, "
+                             "recommended for from-scratch on changed feature pipeline)")
     args = parser.parse_args()
 
     train_one_fold(
@@ -444,6 +665,13 @@ def main() -> None:
         pseudo_power=args.pseudo_power,
         init_ckpt=args.init_ckpt,
         version=args.version,
+        soup_start_ep=args.soup_start_ep,
+        use_bce=args.use_bce,
+        asl_gamma_neg=args.asl_gamma_neg,
+        use_freq_mixstyle=not args.no_freq_mixstyle,
+        use_dual_loss=not args.no_dual_loss,
+        lr_schedule=args.lr_schedule,
+        asl_focal_only=args.asl_focal_only,
     )
 
 
