@@ -15,7 +15,7 @@
 |------|-------|
 | Best Kaggle LB score | **0.908** (Perch v2 + LogReg probes + site/hour priors, 2026-03-30) |
 | Best local val ROC-AUC | 0.7958 (EffB0-v4 soundscape val) |
-| Currently running | **#20b next** — Perch v2 scored **0.908 LB** ✅. Next: SED+Perch ensemble. |
+| Currently running | **#25A — Dual-probe ensemble** (LogReg + LightGBM rank-average). Target: > 0.908 |
 | Architecture | SED — EfficientNet-B0/B3 + GEM pool + Conv1d attention |
 | Loss | **BCE** (production, validated); ASL incompatible with BCE warm-start (v10/v11/v12 all failed) |
 | Spectrogram | **PCEN** (v8 test) / AmplitudeToDB+min-max (production v17 notebook) |
@@ -46,6 +46,8 @@
 | Mar 29 | PCEN 5-fold Stage 1 v13 (EffB0, PCEN, BCE, scratch, 25ep, focal-only) | **0.765 LB** | 5-fold no-self-train > v15 (0.754) but < best 0.769. Self-train confirmed harmful; PCEN needs ensemble diversity to compete. |
 | Mar 29 | PCEN v13 5-fold + temporal smoothing (gaussian sigma=1) | **0.773 LB** ✅ | Smoothing added +0.008 over v13 baseline (0.765). First time beating 0.769. |
 | Mar 30 | Perch v2 + LogReg probes + site/hour priors + dual smoothing + temp scaling | **0.908 LB** ✅ | **New best.** Adapted from public 0.908 notebook. No local training — all inference-time sklearn. Massive jump from 0.773. |
+| Mar 31 | #22: Perch probe upgrade (PCA 64, wider temporal features, LogReg) | **0.904 LB** ❌ | PCA 64 overfits on ~708 samples → −0.004 regression. LightGBM grid searched but not used in submit. |
+| Mar 31 | #22b: Revert PCA to 32 (confirm 0.908 baseline) | **0.908 LB** ✅ | Confirmed: PCA 64 was the cause of regression. Baseline restored. |
 
 ### LB Gap Analysis (2026-03-24)
 | Approach | LB score | Delta vs ours |
@@ -1504,19 +1506,88 @@ Train `tf_efficientnet_b3.ns_jft_in1k` with the validated PCEN config, warm-star
 
 Ensemble: 5×EffB0-vN + 5×EffB3-v2 (10 models). Expected: +0.01–0.02 from architecture diversity.
 
-### Revised Timeline (2026-03-29)
+### Revised Timeline (2026-03-30)
 | Date | Action | Expected LB |
 |------|--------|-------------|
 | Mar 29 ✅ | #15i: PCEN 5-fold v15 self-train → 0.754 ❌; v13 5-fold → 0.765; v13+smoothing → **0.773** ✅ | 0.773 |
-| Mar 29 🔄 | #20: Perch inference notebook (adapted 0.908 approach) — pushed v1 | ~0.905–0.910 |
-| Mar 30 | #20b: SED (0.773) + Perch (~0.908) ensemble notebook | **~0.91–0.92** |
-| Mar 30–31 | Iterate: tune ensemble weights, add more post-processing | +0.005–0.01 |
-| Apr 1–3 | #17: SED ablations (Freq-MixStyle, model soup, circ-shift) to improve SED component | +0.01–0.03 on SED |
-| Apr 4–7 | Retrain SED with improvements → better ensemble | **Target: 0.92+** |
+| Mar 30 ✅ | #20: Perch v2 inference notebook — **0.908 LB** | 0.908 |
+| Mar 30 ❌ | #20b: SED+Perch inline ensemble — **timed out** (even 1-fold SED exceeds 90 min CPU) | — |
+| Mar 30 ❌ | #22: LightGBM probes + larger PCA + wider temporal features | 0.904 ❌ |
+| Mar 31 ✅ | #22b: Revert PCA to 32 — confirmed 0.908 baseline | 0.908 ✅ |
+| Mar 31 | #23: TTA on Perch (neighbor-average TTA, v12) | **0.906 LB** ❌ | Neighbor-averaging embeddings+logits with adjacent windows hurts (−0.002 vs 0.908 baseline). Smoothing blurs per-window signal the probes need. |
+| Apr 1–2 | #24: Pre-compute SED predictions as Kaggle dataset + rank-average blend | +0.005–0.01 |
+| Apr 3–5 | #25: Per-class Platt calibration + deeper probes (small NN or XGBoost) | +0.005–0.01 |
+| Apr 6–10 | #26: Retrain SED with SoftAUCLoss + multi-arch ensemble (pre-computed) | +0.01–0.02 on SED |
+| Apr 11–15 | Iterate: tune blend weights, multi-round pseudo-labeling for SED | **Target: 0.94+** |
 | May 27 | Entry deadline | Best submission locked |
 | Jun 3 | Final submission deadline | — |
 
-**Realistic ceiling**: Pure SED with PCEN + all levers: ~0.85–0.88. With successful Perch integration: ~0.88–0.92. Top competitor: 0.933.
+**Target**: 0.942+ LB. **Realistic ceiling**: Perch probes optimized ~0.92; + pre-computed SED ensemble ~0.93–0.94. Top competitor: 0.9334.
+
+### Strategy Shift (2026-03-30)
+
+**SED cannot run inline** on Kaggle CPU (even 1 fold times out). All SED contributions must be **pre-computed as Kaggle datasets**. The primary scorer is now Perch v2 with improved probes. SED serves as a supplementary signal via rank-averaged blending.
+
+**Key insight from 2025 top solutions**: 1st place used SoftAUCLoss (directly optimizes ROC-AUC metric), multi-architecture ensemble (5 archs × 2 spectrogram types), and 4 rounds of pseudo-labeling to reach 0.933. 2nd place used ECA-NFNet-L0 + EfficientNetV2-S with focal BCE, 2-3 pseudo-label iterations, and rank-based blending.
+
+### #22 ❌ — Upgrade Perch Probes (LightGBM + larger PCA + wider temporal features)
+
+**Goal**: Replace LogReg probes with LightGBM; increase PCA dimensions; add wider temporal context features. All inference-time, no retraining needed. Pure notebook change.
+
+**Changes**:
+1. **LightGBM instead of LogReg**: non-linear, handles feature interactions, fast on CPU
+2. **PCA dim**: grid search 32/64/128/256 (current: 32)
+3. **Wider temporal features**: 3-window mean, 5-window mean, file-level max, variance — not just prev/next
+4. **Per-class calibration**: Platt scaling per class instead of global T=1.15
+
+**Result**: **0.904 LB** ❌ — regressed −0.004 from 0.908 baseline. PCA 64 overfits on ~708 labeled soundscape windows. LightGBM was grid-searched but `PROBE_TYPE` left as `logreg` in submit mode, so regression is purely from PCA 64 + wider temporal features.
+
+**Lesson**: With only ~708 training windows across ~5 sites, increasing feature dimensionality hurts. Changes must be tested one-at-a-time.
+
+### #22b ✅ — Revert PCA to 32 (confirm 0.908 baseline)
+
+Reverted `PROBE_PCA_DIM` from 64 back to 32. **0.908 LB confirmed** — PCA 64 was the sole cause of regression.
+
+### #23 ❌ — Test-Time Augmentation on Perch (Dead End)
+
+**Goal**: Improve predictions by averaging nearby window signals. 2025 top solutions reported +0.01 from TTA.
+
+**v10–v11 (failed)**: +2.5s time-shift with 2× Perch inference. Timed out — 2× Perch calls exceed 90-min CPU budget.
+
+**v12 (failed, 0.906 LB)**: Neighbor-average TTA — zero extra Perch cost. Averaged each window's raw logits and embeddings with adjacent windows (prev, current, next) within the same 60s file. Result: −0.002 regression vs 0.908 baseline. Smoothing blurs per-window temporal signal that probes rely on.
+
+**Conclusion**: TTA on Perch is a dead end — both 2× inference (timeout) and neighbor averaging (hurts score) fail. Revert to baseline.
+
+### #24 ⬜ — Pre-Compute SED Predictions as Kaggle Dataset
+
+**Goal**: Run SED inference in a separate GPU notebook, save predictions as CSV/NPZ dataset, attach to inference notebook for rank-averaged blending.
+
+**Steps**:
+1. Create a GPU-enabled Kaggle notebook that loads SED checkpoints + test soundscapes
+2. Run full 5-fold SED inference (no time constraint on GPU)
+3. Save predictions as Kaggle dataset (`stevewatson999/birdclef2026-sed-predictions`)
+4. Attach dataset to Perch inference notebook
+5. Rank-average blend: `final = 0.5 * rank(perch) + 0.5 * rank(sed)` (tune weights)
+
+**Problem**: Hidden test files are only available in submission notebooks. Pre-computing SED on test data is not possible. **Workaround**: Run SED inline but with extreme optimizations (TFLite/ONNX conversion, single fold, reduced mel resolution) OR accept SED covers only train soundscapes (used for probe training features, not test predictions).
+
+**Alternative**: Include SED logits as additional probe features — train LightGBM probes on Perch embeddings + SED predictions on train soundscapes only. The probes learn to use SED signal where available.
+
+### #25A 🔄 — Dual-Probe Ensemble (LogReg + LightGBM Rank-Average)
+
+**Goal**: Train both LogReg and LightGBM probes per class, rank-normalize each per class, average. Ensemble diversity without extra model or compute cost.
+
+**Changes** (all in `jupyter/perch/birdclef2026-perch-inference.ipynb`):
+1. `PROBE_TYPE = 'dual'` in Settings
+2. Cell 52: trains both `probe_models_lr` and `probe_models_lgbm` for each class
+3. Cell 55: removes neighbor-average TTA (#23 dead end), applies both probe sets, per-class `rankdata()` average
+4. Cell 58: rank-averaged scores already in (0,1) — used directly as probabilities (no temperature scaling needed)
+
+**Gate**: LB > 0.908 baseline.
+
+### #26 ⬜ — Retrain SED with SoftAUCLoss + Multi-Architecture Ensemble
+
+Train SED models using SoftAUCLoss (directly optimizes macro-averaged ROC-AUC). Add ECA-NFNet-L0 and EfficientNetV2-S for architecture diversity. Pre-compute predictions for blend.
 
 ---
 

@@ -1,0 +1,19 @@
+{
+  "id": "stevewatson999/birdclef-2026-ensemble",
+  "title": "BirdCLEF 2026 Ensemble",
+  "code_file": "birdclef2026-ensemble.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [],
+  "competition_sources": [
+    "birdclef-2026"
+  ],
+  "kernel_sources": [
+    "stevewatson999/birdclef-2026-perch-inference",
+    "stevewatson999/birdclef-2026-sed-inference"
+  ]
+}

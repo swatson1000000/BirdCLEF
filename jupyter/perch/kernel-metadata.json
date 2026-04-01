@@ -9,7 +9,8 @@
   "enable_tpu": false,
   "enable_internet": false,
   "dataset_sources": [
-    "jaejohn/perch-meta"
+    "jaejohn/perch-meta",
+    "stevewatson999/birdclef2026-sed-models"
   ],
   "competition_sources": [
     "birdclef-2026"

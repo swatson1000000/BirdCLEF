@@ -17,11 +17,13 @@ Never propose the next step from memory or inference alone — always verify aga
 ## Environment Setup
 
 ### Conda Environment
-This project uses the **kaggle** conda environment. Before executing any Python scripts, activate this environment:
+This project uses the **kaggle** conda environment. **ALWAYS activate it before running ANY command** — training, inference, `kaggle` CLI pushes, or any Python script:
 
 ```bash
-conda activate kaggle
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate kaggle
 ```
+
+⚠️ Plain `conda activate kaggle` fails in non-interactive shells (Bash tool). Always use the `source` prefix above.
 
 ## Python Script Execution Policy
 
