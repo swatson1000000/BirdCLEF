@@ -1,0 +1,24 @@
+{
+  "id": "stevewatson999/birdclef-2026-protossm",
+  "title": "BirdCLEF 2026 ProtoSSM",
+  "code_file": "birdclef2026-protossm.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "jaejohn/perch-meta",
+    "brucewu1200/birdclef-2026-cvlb-assets-0911"
+  ],
+  "kernel_sources": [
+    "ashok205/tf-wheels"
+  ],
+  "competition_sources": [
+    "birdclef-2026"
+  ],
+  "model_sources": [
+    "google/bird-vocalization-classifier/TensorFlow2/perch_v2_cpu/1"
+  ]
+}

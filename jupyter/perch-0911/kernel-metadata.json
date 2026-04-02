@@ -9,7 +9,8 @@
   "enable_tpu": false,
   "enable_internet": false,
   "dataset_sources": [
-    "brucewu1200/birdclef-2026-cvlb-assets-0911"
+    "brucewu1200/birdclef-2026-cvlb-assets-0911",
+    "stevewatson999/birdclef2026-sed-onnx-models"
   ],
   "competition_sources": [
     "birdclef-2026"

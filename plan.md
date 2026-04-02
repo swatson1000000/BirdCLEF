@@ -20,8 +20,9 @@
 | Secondary architecture | SED — EfficientNet-B0/B3 + GEM pool + Conv1d attention (0.773 LB, can't run inline on Kaggle CPU) |
 | Active notebook | `jupyter/perch/birdclef2026-perch-inference.ipynb` (v15, Perch v2 dual probes) |
 | Inference notebook URL | https://www.kaggle.com/code/stevewatson999/birdclef-2026-perch-inference |
-| Top competitor | 0.9334 (yuanzhe zhou) |
-| Gap to close | 0.021 (0.912 → 0.933) |
+| Target score | 0.942 |
+| Gap to close | 0.030 (0.912 → 0.942) |
+| Currently working on | #30: Adopt ProtoSSM temporal model on Perch embeddings (public 0.924) |
 
 ### LB Submission History
 | Date | Approach | LB score | Notes |
@@ -52,6 +53,8 @@
 | Apr 1 | #25A: Dual-probe ensemble (LogReg + LightGBM rank-average) | **0.909 LB** ✅ | +0.001 over baseline. New best. |
 | Apr 1 | #25B: OOF-tuned params (isotonic, alpha=0.6, LGBM 70%, smoothing) | **0.837 LB** ❌ | OOF-tuned hyperparams massively overfit. Isotonic calibration + changed alphas/blend weights all failed on LB. Reverted to 0.909 baseline. |
 | Apr 1 | #28A: Adopt brucewu1200 0.911 solution (Perch ONNX + Ridge student + teacher calibration) | **0.912 LB** ✅ | **New best.** Used pre-trained clip_student_bundle + teacher OOF soft targets + per-class Ridge calibration + ONNX Runtime (bundled wheel). |
+| Apr 1 | #28C: Rank-average Ridge student + our dual probes (3-way ensemble) | **0.901 LB** ❌ | Our probes (0.909) are weaker than Ridge student (0.912) — rank-averaging diluted good predictions. Ensemble only works when both systems are comparably strong. |
+| Apr 2 | #29: Perch Ridge student + SED ONNX (sparse fusion 3-seed EffB0) 50/50 rank-average | **0.910 LB** ❌ | SED models too weak to help — diluted Perch predictions. Same pattern as #28C. Ensemble of weak+strong = regression. |
 
 ### LB Gap Analysis (2026-03-24)
 | Approach | LB score | Delta vs ours |
@@ -1742,6 +1745,80 @@ final = 0.5 * rank(our_dual_probe_scores) + 0.5 * rank(their_ridge_student_score
 The key lesson from this competition: **don't reinvent what others have already solved**. Their teacher model + student bundle encodes weeks of iteration that we can leverage immediately. Our unique contribution is the dual-probe ensemble diversity and the potential SED signal (if we can run it inline via ONNX).
 
 **Stretch goal**: If ONNX Runtime is available, we can also convert our SED models to ONNX and run them inline — unlocking a 3-way ensemble (their Ridge student + our probes + our SED) that could push past 0.92.
+
+---
+
+### #28C ❌ — Rank-Average Ridge Student + Our Dual Probes — **0.901 LB**
+
+**Goal**: Ensemble the 0.912 Ridge student with our 0.909 dual probes via rank-averaging.
+
+**Result**: 0.901 — worse than either system alone. Our probes (LogReg + LightGBM) score 0.909 which is weaker than the Ridge student (0.912). Rank-averaging pulls predictions toward the weaker system.
+
+**Lesson**: Ensemble diversity only helps when both systems are comparably strong. A 0.909 system averaged with a 0.912 system won't exceed 0.912 — it will regress.
+
+### #30 🔄 — ProtoSSM Temporal Model on Perch Embeddings (2026-04-02)
+
+**Goal**: Replace independent-window Ridge/LogReg probes with a learned temporal model that sees all 12 windows per file simultaneously. This is the single biggest technique gap between us (0.912) and the top public solutions (0.924+).
+
+**Source**: Public notebook "Pantanal Distill BirdCLEF2026 Improvement" (274 votes, v16 scored 0.924).
+URL: https://www.kaggle.com/code/yusufmurtaza01/pantanal-distill-birdclef2026-improvement
+
+**Key techniques from ProtoSSM (0.924)**:
+1. **ProtoSSM**: Bidirectional State Space Model (d_model=256-320, 3-4 SSM layers) on Perch v2 embeddings, with cross-attention (4-8 heads), site/hour metadata embeddings, and prototypical contrastive learning
+2. **Multi-task loss**: Focal BCE (gamma=2.5) + KD from Perch logits (0.15) + prototypical contrastive + taxonomic auxiliary + label smoothing (0.03)
+3. **Mixup at file level** (alpha=0.4)
+4. **SWA** (stochastic weight averaging, starting at 65% of training)
+5. **ResidualSSM**: 2nd-pass model on prediction residuals for systematic correction
+6. **5-fold GroupKFold OOF** with ensemble weight sweep
+7. **Post-processing stack**: TTA (5 time shifts), per-taxon temperature scaling, file-level top-k scaling, rank-aware power transform, delta shift temporal smoothing, OOF per-class thresholds
+
+**Estimated gains**:
+- Temporal model alone: +0.012-0.015 (0.912 → ~0.924-0.927)
+- Post-processing stack: +0.005-0.008
+- Residual boosting: +0.003-0.005
+- Combined: could reach 0.932-0.940 range
+
+**Approach**: Download and adapt the ProtoSSM notebook. The model trains on Perch embeddings (which we already compute), so it layers on top of our existing pipeline.
+
+**Risk**: ProtoSSM requires PyTorch model training (not just sklearn), but inference still runs on CPU within 90 min.
+
+---
+
+### #29 ❌ — Perch ONNX + SED ONNX Ensemble (2026-04-01)
+
+**Goal**: Blend the Perch Ridge student (0.912) with CNN SED predictions from a different model family. CNN captures temporal/spectral patterns that Perch's frozen embeddings miss.
+
+**Source**: `mauriciooffermann/birdclef-2026-exp-034-sparse-fusion-safe-bundle` provides 3 EffB0 checkpoints trained with different seeds (42, 1337, 2026). These are high-quality models from a competitor likely scoring 0.93+.
+
+**Key findings**:
+- Converted all 3 checkpoints to ONNX (0.6 MB each, opset 18)
+- Max numerical diff vs PyTorch: 0.00002 — effectively identical
+- Benchmark: 200 test files × 3 seeds = **30.7 seconds** on CPU — trivial vs 90-min budget
+- Label ordering matches competition exactly (234 classes, same order as 0.912 solution)
+- Model architecture: `tf_efficientnet_b0` + avg pooling + Linear(1280, 234)
+- Spectrogram: MelSpectrogram(sr=32000, n_fft=2048, hop=512, n_mels=128, f_min=20, f_max=16000) → log → per_sample_normalize → resize(224, 224)
+
+**Approach**:
+1. Run Perch ONNX pipeline (their 0.912 code, ~10 min)
+2. Run SED ONNX inference for each test soundscape (compute mel spectrogram on the fly, 3 seeds, ~30 sec)
+3. Average 3-seed SED logits → sigmoid → SED probabilities
+4. Rank-average: `final = 0.5 * rank(perch_probs) + 0.5 * rank(sed_probs)` (tune weights)
+
+**Timing budget** (for ~200 test files):
+| Step | Time |
+|------|------|
+| Install wheels + load assets | ~30s |
+| Perch ONNX: 66 train files (calibration) | ~145s |
+| Perch ONNX: 200 test files | ~400s |
+| Ridge calibration + student prediction | ~5s |
+| SED mel spectrogram computation (200 files × 12 windows) | ~30s |
+| SED ONNX inference (200 files × 3 seeds) | ~30s |
+| Post-processing + rank-average | ~5s |
+| **Total** | **~650s (~11 min)** |
+
+**Massive time headroom**: 79 min remaining of 90-min budget. Could add more models later.
+
+**Dataset requirement**: Need to upload ONNX models + the spectrogram config as a Kaggle dataset, since the original sparse fusion bundle is too large (908 MB) and contains unused files.
 
 ---
 
