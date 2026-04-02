@@ -1,0 +1,21 @@
+{
+  "id": "stevewatson999/birdclef-2026-perch-0911",
+  "title": "BirdCLEF 2026 Perch 0911",
+  "code_file": "birdclef2026-perch-0911.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "brucewu1200/birdclef-2026-cvlb-assets-0911"
+  ],
+  "competition_sources": [
+    "birdclef-2026"
+  ],
+  "kernel_sources": [],
+  "model_sources": [
+    "google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1"
+  ]
+}

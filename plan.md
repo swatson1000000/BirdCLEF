@@ -13,14 +13,15 @@
 
 | Item | Value |
 |------|-------|
-| Best Kaggle LB score | **0.908** (Perch v2 + LogReg probes + site/hour priors, 2026-03-30) |
+| Best Kaggle LB score | **0.912** (Perch v2 ONNX + Ridge student + teacher calibration, 2026-04-01) |
 | Best local val ROC-AUC | 0.7958 (EffB0-v4 soundscape val) |
-| Currently running | **#25A — Dual-probe ensemble** (LogReg + LightGBM rank-average). Target: > 0.908 |
-| Architecture | SED — EfficientNet-B0/B3 + GEM pool + Conv1d attention |
-| Loss | **BCE** (production, validated); ASL incompatible with BCE warm-start (v10/v11/v12 all failed) |
-| Spectrogram | **PCEN** (v8 test) / AmplitudeToDB+min-max (production v17 notebook) |
-| Active notebook | `jupyter/sed/birdclef2026-sed-inference.ipynb` (v17, EffB0-v4 + RegNetY-v2) |
-| Inference notebook URL | https://www.kaggle.com/code/stevewatson999/birdclef-2026-sed-inference |
+| Currently running | — |
+| Primary architecture | Perch v2 (frozen) + sklearn probes (LogReg + LightGBM rank-average) |
+| Secondary architecture | SED — EfficientNet-B0/B3 + GEM pool + Conv1d attention (0.773 LB, can't run inline on Kaggle CPU) |
+| Active notebook | `jupyter/perch/birdclef2026-perch-inference.ipynb` (v15, Perch v2 dual probes) |
+| Inference notebook URL | https://www.kaggle.com/code/stevewatson999/birdclef-2026-perch-inference |
+| Top competitor | 0.9334 (yuanzhe zhou) |
+| Gap to close | 0.021 (0.912 → 0.933) |
 
 ### LB Submission History
 | Date | Approach | LB score | Notes |
@@ -48,6 +49,9 @@
 | Mar 30 | Perch v2 + LogReg probes + site/hour priors + dual smoothing + temp scaling | **0.908 LB** ✅ | **New best.** Adapted from public 0.908 notebook. No local training — all inference-time sklearn. Massive jump from 0.773. |
 | Mar 31 | #22: Perch probe upgrade (PCA 64, wider temporal features, LogReg) | **0.904 LB** ❌ | PCA 64 overfits on ~708 samples → −0.004 regression. LightGBM grid searched but not used in submit. |
 | Mar 31 | #22b: Revert PCA to 32 (confirm 0.908 baseline) | **0.908 LB** ✅ | Confirmed: PCA 64 was the cause of regression. Baseline restored. |
+| Apr 1 | #25A: Dual-probe ensemble (LogReg + LightGBM rank-average) | **0.909 LB** ✅ | +0.001 over baseline. New best. |
+| Apr 1 | #25B: OOF-tuned params (isotonic, alpha=0.6, LGBM 70%, smoothing) | **0.837 LB** ❌ | OOF-tuned hyperparams massively overfit. Isotonic calibration + changed alphas/blend weights all failed on LB. Reverted to 0.909 baseline. |
+| Apr 1 | #28A: Adopt brucewu1200 0.911 solution (Perch ONNX + Ridge student + teacher calibration) | **0.912 LB** ✅ | **New best.** Used pre-trained clip_student_bundle + teacher OOF soft targets + per-class Ridge calibration + ONNX Runtime (bundled wheel). |
 
 ### LB Gap Analysis (2026-03-24)
 | Approach | LB score | Delta vs ours |
@@ -1515,14 +1519,18 @@ Ensemble: 5×EffB0-vN + 5×EffB3-v2 (10 models). Expected: +0.01–0.02 from arc
 | Mar 30 ❌ | #22: LightGBM probes + larger PCA + wider temporal features | 0.904 ❌ |
 | Mar 31 ✅ | #22b: Revert PCA to 32 — confirmed 0.908 baseline | 0.908 ✅ |
 | Mar 31 | #23: TTA on Perch (neighbor-average TTA, v12) | **0.906 LB** ❌ | Neighbor-averaging embeddings+logits with adjacent windows hurts (−0.002 vs 0.908 baseline). Smoothing blurs per-window signal the probes need. |
-| Apr 1–2 | #24: Pre-compute SED predictions as Kaggle dataset + rank-average blend | +0.005–0.01 |
-| Apr 3–5 | #25: Per-class Platt calibration + deeper probes (small NN or XGBoost) | +0.005–0.01 |
-| Apr 6–10 | #26: Retrain SED with SoftAUCLoss + multi-arch ensemble (pre-computed) | +0.01–0.02 on SED |
-| Apr 11–15 | Iterate: tune blend weights, multi-round pseudo-labeling for SED | **Target: 0.94+** |
+| Apr 1 ✅ | #25A: Dual-probe ensemble (LogReg + LightGBM rank-average) | **0.909 LB** ✅ | +0.001. New best. |
+| Apr 1 ✅ | #25B: OOF grid search → 0.837 ❌, reverted | Dead end |
+| Apr 1 ✅ | #27: Downloaded & analyzed `brucewu1200/birdclef-2026-cvlb-assets-0911` (0.911 solution) | Research |
+| Apr 1 ✅ | **#28A: Adopt 0.911 solution as new baseline** | **0.912 LB** ✅ |
+| Apr 2 | **#28C: Rank-average 0.911 student + our dual probes** | 0.915–0.918 |
+| Apr 3–5 | Iterate: tune CLIP_CFG/POST_CFG, blend weights, add our priors | 0.918–0.925 |
+| Apr 6–10 | ONNX SED inline + 3-way ensemble (student + probes + SED) | 0.925–0.935 |
+| Apr 11–15 | Final tuning, single-variable LB experiments | **Target: 0.93+** |
 | May 27 | Entry deadline | Best submission locked |
 | Jun 3 | Final submission deadline | — |
 
-**Target**: 0.942+ LB. **Realistic ceiling**: Perch probes optimized ~0.92; + pre-computed SED ensemble ~0.93–0.94. Top competitor: 0.9334.
+**Target**: 0.93+ LB. **Strategy**: Leverage 0.911 public solution assets + our ensemble diversity + potential ONNX SED. Top competitor: 0.9334.
 
 ### Strategy Shift (2026-03-30)
 
@@ -1573,7 +1581,7 @@ Reverted `PROBE_PCA_DIM` from 64 back to 32. **0.908 LB confirmed** — PCA 64 w
 
 **Alternative**: Include SED logits as additional probe features — train LightGBM probes on Perch embeddings + SED predictions on train soundscapes only. The probes learn to use SED signal where available.
 
-### #25A 🔄 — Dual-Probe Ensemble (LogReg + LightGBM Rank-Average)
+### #25A ✅ — Dual-Probe Ensemble (LogReg + LightGBM Rank-Average) — **0.909 LB**
 
 **Goal**: Train both LogReg and LightGBM probes per class, rank-normalize each per class, average. Ensemble diversity without extra model or compute cost.
 
@@ -1583,7 +1591,159 @@ Reverted `PROBE_PCA_DIM` from 64 back to 32. **0.908 LB confirmed** — PCA 64 w
 3. Cell 55: removes neighbor-average TTA (#23 dead end), applies both probe sets, per-class `rankdata()` average
 4. Cell 58: rank-averaged scores already in (0,1) — used directly as probabilities (no temperature scaling needed)
 
-**Gate**: LB > 0.908 baseline.
+**Result**: **0.909 LB** ✅ — +0.001 over baseline. Gate passed (marginal). Dual-probe adds small but real signal.
+
+### #25B ❌ — OOF Grid Search + Probe Tuning (2026-04-01) — **0.837 LB**
+
+**Goal**: Systematic hyperparameter tuning via leave-one-site-out OOF on the 708 labeled soundscape windows. Staged grid search over blend weights, smoothing, priors, calibration, and probe diversity.
+
+**Method**: `src/perch_oof_grid.py` — generates Perch TFLite cache locally (66 files, ~5 min), then runs 6-stage grid search (~15 min total). Uses GroupKFold(n_splits=5) by site, same as notebook.
+
+**Important caveat**: OOF AUC is much lower than LB AUC (~0.54 baseline vs ~0.91 LB) because leave-one-site-out CV means priors have no information about held-out sites. The absolute numbers are unreliable but relative ranking of configs is valid.
+
+**Results** (6-stage sequential optimization):
+
+| Stage | Parameter | Current | Best OOF | OOF AUC |
+|-------|-----------|---------|----------|---------|
+| 1 | dual_weight_lr (LR vs LGBM) | 0.5/0.5 | **0.3/0.7** | 0.545 |
+| 2 | smooth_texture / smooth_event | 0.35/0.15 | **0.20/0.20** | 0.546 |
+| 3 | lambda_event / lambda_texture | 0.4/1.0 | **0.2/0.6** | 0.687 |
+| 4 | isotonic calibration | No | **Yes** | 0.748 (+0.063) |
+| 5 | Ridge third probe | No | **No** (no benefit) | 0.755 |
+| 6 | probe_alpha | 0.40 | **0.60** | 0.763 |
+| **Final** | All combined | — | — | **0.765** |
+
+**Baseline OOF**: 0.539 → **Best OOF: 0.765** (+0.226)
+
+**Applied to notebook** (conservative — keeping lambdas at original values since OOF penalizes strong priors but Kaggle test sites overlap with training):
+- `PROBE_ALPHA`: 0.40 → **0.60** (trust probes more)
+- `DUAL_WEIGHT_LR`: 0.5 → **0.3** (70% LGBM, 30% LogReg)
+- `SMOOTH_TEXTURE_ALPHA`: 0.35 → **0.20**
+- `SMOOTH_EVENT_ALPHA`: 0.15 → **0.20**
+- `USE_ISOTONIC`: **True** (per-class isotonic calibration, biggest single gain)
+- Lambdas: **unchanged** (0.4/1.0 — OOF-optimal 0.2/0.6 would likely hurt on LB)
+- Ridge: **not added** (no OOF benefit)
+
+**LB Result**: **0.837** ❌ — massive regression from 0.909. All changes reverted.
+
+**Post-mortem**: OOF site-grouped CV is fundamentally unreliable as a proxy for LB:
+1. **Isotonic calibration** overfits — OOF used cross-validated isotonic, but submission fits on all 708 training samples and predicts on test. With only ~71 active classes and ~708 samples, the calibration memorizes training patterns.
+2. **All OOF-optimal parameters diverge from LB-optimal** — because site-grouped OOF penalizes priors (which are the dominant signal on LB where test sites overlap training sites), the OOF rewards configs that minimize prior influence, which hurts LB.
+3. **Multiple simultaneous changes** made it impossible to identify which change caused the regression.
+
+**Lesson**: For this competition, site-grouped OOF cannot be used to tune hyperparameters. The only reliable signal is LB itself. Future changes must be single-variable and validated on LB one at a time.
+
+### #27 — Analysis of `brucewu1200/birdclef-2026-cvlb-assets-0911` (0.911 LB solution)
+
+**Downloaded 2026-04-01.** Dataset at `data/external/birdclef-0911/`. Contains a complete 0.911 LB solution with bundled dependencies. Key files:
+
+| File | Description |
+|------|-------------|
+| `submission_main.py` | Self-contained inference script (803 lines) |
+| `clip_student_bundle.pkl` | Pre-trained Ridge student model + PCA + scalers |
+| `teacher_oof_predictions.npz` | Teacher OOF soft predictions (739×234), hard labels, raw/base/anchor scores |
+| `teacher_eval_rows.parquet` | Metadata for 739 labeled soundscape rows (site, hour, fold, etc.) |
+| `perch_v2_no_dft.onnx` | Perch v2 model converted to ONNX (no DFT preprocessing) |
+| `wheels/onnxruntime-1.24.3-*.whl` | ONNX Runtime wheel for offline install on Kaggle |
+| `wheels/scikit-learn-1.8.0-*.whl` | scikit-learn wheel (newer version than Kaggle default) |
+
+#### Key Techniques in the 0.911 Solution (vs our 0.909)
+
+| Technique | 0.911 Solution | Our 0.909 Baseline | Delta |
+|-----------|---------------|---------------------|-------|
+| **Perch backend** | ONNX Runtime (bundled wheel) | TF SavedModel | Faster inference, no TF dependency |
+| **Probe model** | Ridge (alpha=8.0) on PCA(256)+raw(234)=490 features | LogReg + LightGBM per-class probes on PCA(32)+raw features | Different approach — single multi-output Ridge vs per-class binary probes |
+| **Teacher soft targets** | Pre-trained teacher (`proto_ssm_quadbank`) OOF predictions as training targets | Hard 0/1 labels only | Soft targets carry richer information, especially for uncertain/rare classes |
+| **Per-class Ridge calibration** | 18-feature Ridge per class (transfer score, base score, raw, prior, global activity × 2, temporal context × 8) with 80% calibration + 20% fallback | No per-class calibration (isotonic failed, see #25B) | Most sophisticated component — but only fires for classes with ≥3 positives |
+| **Site × hour interaction priors** | 3-level: site-only, hour-only, AND site×hour joint | 2-level: site-only + hour-only | Joint prior captures site-specific diurnal patterns |
+| **Prior shrinkage** | Bayesian shrinkage: `mix = n / (n + shrink)` with separate shrink params (site=8, hour=8, site_hour=4) | Additive log-odds with fixed lambda weights | Shrinkage adapts prior strength to sample size per site/hour |
+| **Post-processing** | Temperature scaling (per-class texture/aves), temporal reduce (max for events, mean for texture), file-level confidence scaling, rank scaling | Fixed smoothing alphas (texture=0.35, event=0.15) | More sophisticated but risk of overfitting |
+| **Calibration target** | 0.7 × teacher_prediction + 0.3 × hard_label (weighted by teacher confidence) | N/A | Teacher predictions act as label smoothing with domain-specific knowledge |
+
+#### 💡 Key Insight: ONNX Runtime IS Available on Kaggle
+
+The 0.911 solution proves that **ONNX Runtime can be used on Kaggle** by bundling the `.whl` file as part of the dataset and installing it offline:
+```python
+# In notebook setup cell:
+!pip install --no-deps /kaggle/input/birdclef-2026-cvlb-assets-0911/wheels/onnxruntime-1.24.3-*.whl
+```
+This unlocks ONNX for Perch inference AND potentially for running SED models as ONNX on CPU within the 90-min budget.
+
+---
+
+### #28 ⬜ — Path to 0.93+: Three Options (2026-04-01)
+
+**Context**: Our Perch probe approach has hit its ceiling at 0.909. OOF tuning (#25B) regressed massively. Single-variable LB experiments (#25A DUAL_WEIGHT_LR) showed marginal/negative returns. We need a fundamentally different approach to close the 0.024 gap to 0.933.
+
+The `brucewu1200/birdclef-2026-cvlb-assets-0911` dataset provides a complete 0.911 solution with pre-trained assets we can directly use.
+
+#### Option A: Adopt 0.911 Solution Wholesale (recommended ⭐)
+
+**What**: Convert `submission_main.py` into our Kaggle notebook, using their pre-trained `clip_student_bundle.pkl` + `teacher_oof_predictions.npz` + `perch_v2_no_dft.onnx` as-is. Then iterate on top of their approach.
+
+**Why this is the best path**:
+- **Immediate +0.002** (0.909 → 0.911) with zero original work — just packaging
+- Their code is clean, self-contained, and well-structured (803 lines, pure numpy/sklearn)
+- We get their pre-trained teacher model's knowledge for free (soft targets on 739 rows)
+- Their Ridge calibration with 18 features per class is more principled than our LogReg probes
+- We can iterate on their hyperparameters (CLIP_CFG, POST_CFG) with single-variable LB experiments
+- ONNX Runtime is faster than TF SavedModel — may free time budget for additional processing
+
+**Steps**:
+1. Create new notebook from `submission_main.py` (convert to cells)
+2. Attach their dataset as Kaggle data source
+3. Submit as-is → confirm 0.911 LB
+4. Iterate: tune CLIP_CFG/POST_CFG params, add our dual-probe technique, blend with our priors
+
+**Risk**: Low. Their code is BSD-licensed (CC0-1.0 dataset). We're using public Kaggle assets.
+**Time**: 1–2 hours to package and submit; then iterative improvement.
+**Expected LB**: 0.911 baseline → 0.915–0.920 with our improvements on top.
+
+#### Option B: Cherry-Pick Best Ideas Into Our Notebook (moderate effort)
+
+**What**: Keep our existing notebook structure but adopt specific techniques from the 0.911 solution:
+1. **Site × hour interaction priors** with Bayesian shrinkage
+2. **ONNX Runtime** for Perch (bundle wheel)
+3. **Use their teacher OOF predictions** as soft targets for our probe training
+4. **18-feature per-class Ridge calibration** replacing our global probe approach
+
+**Why**:
+- Preserves our working notebook (easier to debug regressions)
+- Cherry-picks the highest-value techniques
+- Avoids depending entirely on someone else's code
+
+**Risk**: Medium. Each technique needs careful integration. Site×hour priors alone may not close the gap.
+**Time**: 4–8 hours to implement and test each technique.
+**Expected LB**: 0.912–0.916 (additive gains from each technique).
+
+#### Option C: Hybrid — Use Their Assets + Our Ensemble (highest ceiling)
+
+**What**: Use their `clip_student_bundle.pkl` as a second "model" alongside our existing probes, then rank-average:
+```
+final = 0.5 * rank(our_dual_probe_scores) + 0.5 * rank(their_ridge_student_scores)
+```
+
+**Why**:
+- Ensemble diversity: their Ridge student and our LogReg/LightGBM probes see different feature representations
+- Both score >0.90 individually — rank-average of two 0.91 systems typically gains +0.005–0.01
+- Can also blend in their teacher predictions as a third signal
+
+**Risk**: Medium. Need to ensure both systems use compatible Perch outputs. Their ONNX model produces slightly different embeddings than TF SavedModel.
+**Time**: 3–5 hours.
+**Expected LB**: 0.913–0.918 (ensemble diversity bonus).
+
+#### 🏆 Recommendation: Option A first, then Option C
+
+**Rationale**:
+1. **Option A first** (1–2 hours): Get 0.911 baseline confirmed. This is pure packaging — no research risk.
+2. **Then Option C** (3–5 hours): Rank-average their student predictions with our dual-probe predictions. Two diverse 0.91+ systems should ensemble to 0.915+.
+3. **Then iterate** on the combined system: tune blend weights, add our site×hour priors, explore teacher soft targets for our probes.
+
+The key lesson from this competition: **don't reinvent what others have already solved**. Their teacher model + student bundle encodes weeks of iteration that we can leverage immediately. Our unique contribution is the dual-probe ensemble diversity and the potential SED signal (if we can run it inline via ONNX).
+
+**Stretch goal**: If ONNX Runtime is available, we can also convert our SED models to ONNX and run them inline — unlocking a 3-way ensemble (their Ridge student + our probes + our SED) that could push past 0.92.
+
+---
 
 ### #26 ⬜ — Retrain SED with SoftAUCLoss + Multi-Architecture Ensemble
 
