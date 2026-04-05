@@ -13,16 +13,16 @@
 
 | Item | Value |
 |------|-------|
-| Best Kaggle LB score | **0.912** (Perch v2 ONNX + Ridge student + teacher calibration, 2026-04-01) |
+| Best Kaggle LB score | **0.927** (ProtoSSM + correction_weight 0.10 post-proc tweak, 2026-04-05) |
 | Best local val ROC-AUC | 0.7958 (EffB0-v4 soundscape val) |
-| Currently running | — |
-| Primary architecture | Perch v2 (frozen) + sklearn probes (LogReg + LightGBM rank-average) |
+| Currently running | #35A: Post-proc tweak (correction_weight 0.35→0.10) v5 pushed; #34C2: 2-fold+GRU ready to push |
+| Primary architecture | ProtoSSM (bidirectional SSM on Perch v2 embeddings, trains on Kaggle) |
 | Secondary architecture | SED — EfficientNet-B0/B3 + GEM pool + Conv1d attention (0.773 LB, can't run inline on Kaggle CPU) |
-| Active notebook | `jupyter/perch/birdclef2026-perch-inference.ipynb` (v15, Perch v2 dual probes) |
-| Inference notebook URL | https://www.kaggle.com/code/stevewatson999/birdclef-2026-perch-inference |
-| Target score | 0.942 |
-| Gap to close | 0.030 (0.912 → 0.942) |
-| Currently working on | #30: Adopt ProtoSSM temporal model on Perch embeddings (public 0.924) |
+| Active notebook | `jupyter/protossm/birdclef2026-protossm.ipynb` (0.926 LB baseline) |
+| Inference notebook URL | https://www.kaggle.com/code/stevewatson999/birdclef2026-protossm |
+| Target score | 0.940 |
+| Gap to close | 0.013 (0.927 → 0.940) |
+| Currently working on | #35A: Post-proc tuning (v5 pushed) + #34C2: 2-fold+GRU (ready to push after #35A scores) |
 
 ### LB Submission History
 | Date | Approach | LB score | Notes |
@@ -55,6 +55,17 @@
 | Apr 1 | #28A: Adopt brucewu1200 0.911 solution (Perch ONNX + Ridge student + teacher calibration) | **0.912 LB** ✅ | **New best.** Used pre-trained clip_student_bundle + teacher OOF soft targets + per-class Ridge calibration + ONNX Runtime (bundled wheel). |
 | Apr 1 | #28C: Rank-average Ridge student + our dual probes (3-way ensemble) | **0.901 LB** ❌ | Our probes (0.909) are weaker than Ridge student (0.912) — rank-averaging diluted good predictions. Ensemble only works when both systems are comparably strong. |
 | Apr 2 | #29: Perch Ridge student + SED ONNX (sparse fusion 3-seed EffB0) 50/50 rank-average | **0.910 LB** ❌ | SED models too weak to help — diluted Perch predictions. Same pattern as #28C. Ensemble of weak+strong = regression. |
+| Apr 2 | #30: ProtoSSM temporal model on Perch v2 embeddings | **0.926 LB** ✅ | **New best.** ProtoSSM bidirectional SSM sees all 12 windows per file simultaneously. Massive +0.014 over Ridge student (0.912). |
+| Apr 2 | #31B v1: ProtoSSM TTA5 (5 shifts everywhere) | *(timeout)* ❌ | 5 TTA shifts during OOF training (5 folds × 30 epochs × 5 shifts) exceeded 90-min wall time. |
+| Apr 3 | #31B v2: ProtoSSM TTA5 (OOF=3, test=5 shifts) | *(timeout)* ❌ | Split TTA: 3 shifts OOF, 5 shifts test. Still exceeded 90-min wall time even with ResidualSSM disabled. |
+| Apr 3 | #31B v3: ProtoSSM TTA5 (batched TTA + wall-time guard + epochs 25) | *(not submitted — superseded by #32)* | Batched all TTA shifts into single forward pass. Dynamic fallback to 3 shifts if <12 min remaining. Reduced epochs 30→25 for headroom. Superseded by pre-train approach. |
+| Apr 3 | #31B ablation-nores: ProtoSSM with ResidualSSM disabled | *(timeout)* ❌ | Even with ResidualSSM disabled, still timed out. Confirmed: OOF training is the bottleneck, not ResidualSSM. |
+| Apr 3 | #32: ProtoSSM pre-trained locally, inference-only on Kaggle | **0.922 LB** ❌ | Pre-trained V18 full config (80 epochs, 5 folds, TTA5) locally. OOF AUC=0.9571 but LB regressed −0.004 vs #30 (0.926). Root cause: model weights overfit locally + OOF-tuned hyperparams. |
+| Apr 4 | #33A: ProtoSSM pre-trained + conservative post-processing | **0.921 LB** ❌ | Reverted all OOF-tuned params to base values (correction_weight=0, ensemble_weight=0.5, thresholds=0.5). Still worse — confirms pre-trained weights themselves overfit, not just post-proc. Pre-trained approach is dead. |
+| Apr 4 | #34A: ProtoSSM + chaneyma Xformer ensemble (50/50 rank-average) | **0.912 LB** ❌ | Xformer (CV 0.943 locally) collapses on Kaggle. Same root cause: local Perch embeddings ≠ Kaggle Perch embeddings. ANY pre-trained Perch-based model is DOA on Kaggle. |
+| Apr 5 | #34C: ProtoSSM + GRU dual head (30ep, 3-fold, ResidualSSM off, GRU 8ep) | *(timeout)* ❌ | Baseline already ~80 min; GRU overhead (+1-2 min) + hardware variance pushed over 90 min. Need to cut ProtoSSM epochs or folds. |
+| Apr 5 | #34C1: ProtoSSM + GRU dual head (25ep, 3-fold, ResidualSSM off, GRU 8ep) | *(timeout)* ❌ | Epochs 30→25 saved ~3-4 min but hardware variance still pushed over 90 min. 3-fold is the bottleneck. |
+| Apr 5 | #35A: Post-proc tweak (correction_weight 0.35→0.10) | **0.927 LB** ✅ | OOF-validated optimal correction_weight. +0.001 over 0.926 baseline. New best. |
 
 ### LB Gap Analysis (2026-03-24)
 | Approach | LB score | Delta vs ours |
@@ -1756,9 +1767,118 @@ The key lesson from this competition: **don't reinvent what others have already 
 
 **Lesson**: Ensemble diversity only helps when both systems are comparably strong. A 0.909 system averaged with a 0.912 system won't exceed 0.912 — it will regress.
 
-### #30 🔄 — ProtoSSM Temporal Model on Perch Embeddings (2026-04-02)
+### #32 🔄 — Pre-train ProtoSSM Locally, Inference-Only on Kaggle (2026-04-03)
+
+**Goal**: Eliminate the 90-min Kaggle timeout bottleneck by pre-training ProtoSSM locally and uploading weights as a Kaggle dataset. The inference notebook only runs Perch extraction + forward passes (~15-20 min), freeing 70+ min of headroom for TTA5 and any future enhancements.
+
+**Problem**: Every attempt to add TTA5 or ablate the ProtoSSM notebook timed out on Kaggle's 90-min CPU limit. The root cause was OOF cross-validation training (3-5 folds × 30-80 epochs) consuming ~60-70 min.
+
+**Solution**: Pre-train locally with the FULL V18 config (stronger than the Kaggle submit-mode caps):
+| Parameter | Kaggle submit-mode | Local V18 full |
+|-----------|-------------------|----------------|
+| Epochs | 30 | 80 |
+| Patience | 10 | 20 |
+| OOF folds | 3 | 5 |
+| TTA shifts | [0, 1, -1] | [0, 1, -1, 2, -2] |
+
+**Implementation**:
+1. `src/train_protossm_local.py` — Extracts code from the original notebook, patches Kaggle paths to local, forces MODE="train", replaces TF import with stub (prevents segfault in `loss.backward()`), adds artifact saving
+2. `src/build_inference_notebook.py` — Programmatically builds inference-only notebook from the original
+3. Artifacts (69 MB) uploaded as Kaggle dataset: `stevewatson999/birdclef2026-protossm-pretrained`
+4. Inference notebook: `jupyter/protossm-pretrained/birdclef2026-protossm-pretrained.ipynb`
+
+**Key technical finding**: TensorFlow import causes a segfault in PyTorch's `loss.backward()` even with `CUDA_VISIBLE_DEVICES=""`. The fix was replacing `import tensorflow as tf` with a stub module, since TF is only used for Perch model loading (and we have the Perch cache pre-computed).
+
+**Artifacts saved** (69 MB total):
+- `proto_ssm_final.pth` (23 MB) — ProtoSSMv2 state_dict
+- `residual_ssm.pth` (1.7 MB) — ResidualSSM state_dict
+- `probe_models.joblib` (44 MB) — Per-class MLPClassifier dict
+- `emb_scaler.joblib`, `emb_pca.joblib` — StandardScaler + PCA transform
+- `prior_tables.json`, `hyperparams.json`, `model_config.json` — Config/priors
+- `site_mapping.json`, `taxonomy_info.json`, `class_info.json` — Mapping tables
+- `oof_predictions.npz` — OOF predictions for post-processing tuning
+
+**Results**: Local training completed in 4.6 min. OOF ensemble AUC = 0.9571 (optimal weight 0.60). Submitted to Kaggle, awaiting LB score.
+
+**Expected LB**: ≥ 0.926 (same or better, since V18 full config has more epochs/folds/TTA shifts than the submit-mode caps used by the 0.926 submission).
+
+**Actual LB**: 0.922 ❌ — Regressed −0.004 due to OOF-overfit hyperparams (see #33 for diagnosis and fix).
+
+---
+
+### #33 ❌ — ProtoSSM Pretrained: Dead End (2026-04-04)
+
+**Goal**: Pre-train ProtoSSM locally (80 epochs, 5 folds, TTA5) and load weights on Kaggle for inference-only.
+
+**Result**: Both attempts regressed vs the 0.926 baseline:
+- #32: 0.922 LB (V18-tuned hyperparams)
+- #33A: 0.921 LB (conservative post-processing)
+
+**Root cause**: The pre-trained model weights themselves overfit locally — not just the post-processing. Likely a distribution mismatch between locally-cached and Kaggle-computed Perch embeddings, plus overfitting from longer training (80 epochs vs 30). The original 0.926 benefits from implicit regularization of submit-mode caps (30 epochs, 3 folds).
+
+**Lesson**: Local Perch embeddings ≠ Kaggle Perch embeddings. ANY model trained on local Perch embeddings (our own pretrained ProtoSSM, chaneyma's xformer CV 0.943) collapses on Kaggle. The ONLY working approach is training on Kaggle-computed embeddings within the 90-min budget. This rules out all pre-trained Perch-based models as ensemble candidates.
+
+---
+
+### #34 🔄 — Path to 0.940: Improvement Roadmap (2026-04-04)
+
+**Goal**: Improve from 0.926 to 0.940 target. Pre-trained approach is dead; all improvements must work within the train-on-Kaggle paradigm or add inference-only components.
+
+**Gap analysis**: 0.926 → 0.940 = +0.014. Top LB is 0.9334. Top solutions use multi-architecture ensembles (BirdCLEF 2025 2nd place ensembled ECA-NFNet-L0 + EfficientNetV2-S + rank-average blending).
+
+| Sub | Technique | Estimated gain | Status |
+|-----|-----------|---------------|--------|
+| A | **Xformer ensemble**: chaneyma's TemporalXformer (CV 0.943 locally) rank-averaged 50/50 with ProtoSSM. | ❌ | **0.912 LB** — xformer trained on local Perch embeddings fails on Kaggle-computed embeddings (same root cause as #32/#33A). ANY pre-trained model on local Perch embeddings is DOA. |
+| B | **Mel-spectrogram SED ensemble (brendancarlin eca_nfnet_l0)**: Different feature pipeline (mel spectrograms, not Perch) so no embedding mismatch. 5-fold, ~10 min inference on CPU. Risk: val cMAP only 0.85 — previous weak+strong ensembles regressed (#28C, #29). Would need to verify standalone LB ≥ 0.910 first. | +0.005–0.015 if strong enough | ⬜ |
+| C | **Train GRU second head on Kaggle**: Bidirectional GRU (d=128, 1 layer, ~800K params) trained alongside ProtoSSM on same Kaggle-computed Perch embeddings. 8 epochs, ~60s. Rank-average 70/30 (ProtoSSM/GRU). No Perch mismatch since both train on Kaggle. | +0.003–0.008 | ❌ *(timeout)* v1 timed out — baseline already at ~80 min, GRU+overhead pushed over 90 min. See #34C options below. |
+| C1 | **GRU v2: reduce ProtoSSM epochs 30→25 + keep GRU**. Each epoch ~0.7 min × 3 folds = saves ~3-4 min. Patience usually fires at ~25-28 anyway. Minimal accuracy risk. | +0.003–0.008 | ❌ *(timeout)* — 25ep × 3-fold still too tight with hardware variance. |
+| C2 | **GRU v3: reduce OOF folds 3→2 + keep 30 epochs + GRU**. Saves ~18-20 min (massive headroom). Risk: weaker OOF ensemble. | +0.003–0.008 | 🔄 Notebook built (`jupyter/protossm-2fold-gru/`). Push after #35A scores. |
+| C3 | **Skip GRU, focus on #34D post-processing tuning only**. Keep exact 0.926 notebook, tune one param at a time. Zero timeout risk. | +0.001–0.003 | ⬜ |
+| D | **Post-processing tuning (one param at a time)**: Tune ensemble weight, temperature, or delta-shift alpha individually on the 0.926 notebook. Keep everything else fixed. Low ceiling but zero risk of regression if we only submit improvements. | +0.001–0.003 | 🔄 First tweak (#35A: correction_weight 0.35→0.10) pushed as v5. |
+| E | **Expand ProtoSSM training data**: Include confident pseudo-labels from ProtoSSM's own predictions on unlabeled windows. Currently trains on only 66 fully-labeled files. Must be done within Kaggle notebook (no local pre-computation). | +0.003–0.008 | ⬜ |
+
+---
+
+### #35 🔄 — Post-Processing Tuning (zero timeout risk) (2026-04-05)
+
+**Goal**: Squeeze gains from post-processing params on the 0.926 baseline. Change ONE param per submission. Zero timeout risk since training is unchanged.
+
+**Strategy**: Submit sequentially. Only adopt changes that improve LB. Revert if neutral/negative.
+
+| Sub | Parameter | Current | New | Rationale | Status |
+|-----|-----------|---------|-----|-----------|--------|
+| A | `correction_weight` | 0.35 | 0.10 | OOF grid search found 0.10 optimal (#31A). +0.001 LB confirmed. | ✅ **0.927 LB** |
+| B | `rank_aware_power` | 0.4 | 0.3 | Lower power = less aggressive rank compression. Test after A. | ⬜ |
+| C | `delta_shift_alpha` | 0.20 | 0.15 | Original base value. Less temporal smoothing may help. | ⬜ |
+| D | `temperature` aves | 1.10 | 1.00 | Neutral temperature = less suppression of confident predictions. | ⬜ |
+| E | `file_level_top_k` | 2 | 3 | Slightly more species per file. | ⬜ |
+| F | Per-class thresholds | V18 hardcoded | uniform 0.5 | V18 thresholds may be stale for current ProtoSSM. ROC-AUC is rank-based so sharpening effect is secondary. | ⬜ |
+
+**Parallel track**: #34C2 (2-fold + GRU) notebook ready in `jupyter/protossm-2fold-gru/`. Push after #35A scores to avoid wasting daily submissions.
+
+**Time budget**: 2-fold × 30 epochs = ~55 min + Perch ~10 min + GRU ~2 min + test inference ~3 min = **~70 min** (20 min headroom, safe even with hardware variance).
+
+---
+
+### #31 🔄 — ProtoSSM Refinements: ResidualSSM + TTA + Post-Processing (2026-04-02)
+
+**Goal**: Squeeze remaining gains from the ProtoSSM pipeline (0.926 → 0.932–0.940). Three independent options, each testable with a single LB submission.
+
+**Estimated combined ceiling**: 0.932–0.940 (from #30 estimates: +0.003–0.005 residual, +0.005–0.008 post-processing, +0.002–0.005 ensemble)
+
+| Sub | Technique | Estimated gain | Status |
+|-----|-----------|---------------|--------|
+| A | **ResidualSSM tuning**: Verify it's active on Kaggle (wall-time gate at 35 min). Run train-mode locally to check OOF impact. Tune `correction_weight` (0.2–0.5, currently 0.35). | +0.003–0.005 | ✅ Marginal — ResidualSSM IS active (2.3s, 79.5 min remaining). Optimal weight=0.10 vs current 0.35 gains only +0.0001 OOF. Not worth a submission. |
+| B | **Expand TTA**: Submit mode uses 3 shifts `[0,1,-1]`; train config has 5 `[0,1,-1,2,-2]`. Free accuracy if wall-time allows. | +0.002–0.004 | ❌ All variants timed out (v1, v2, ablation-nores). Root cause: OOF training is bottleneck (~60-70 min). Superseded by #32 (pre-train locally). |
+| C | **Re-optimize post-processing on 0.926 OOF**: Per-class thresholds, rank-aware power, delta-shift alpha, per-taxon temperatures are all hardcoded from V18. Re-fit on current stronger OOF predictions. | +0.002–0.005 | ⬜ |
+
+---
+
+### #30 ✅ — ProtoSSM Temporal Model on Perch Embeddings (2026-04-02)
 
 **Goal**: Replace independent-window Ridge/LogReg probes with a learned temporal model that sees all 12 windows per file simultaneously. This is the single biggest technique gap between us (0.912) and the top public solutions (0.924+).
+
+**Result**: **0.926 LB** ✅ — New best. +0.014 over previous best (0.912). ProtoSSM temporal model significantly outperforms independent-window probes.
 
 **Source**: Public notebook "Pantanal Distill BirdCLEF2026 Improvement" (274 votes, v16 scored 0.924).
 URL: https://www.kaggle.com/code/yusufmurtaza01/pantanal-distill-birdclef2026-improvement
