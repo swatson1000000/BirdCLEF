@@ -174,7 +174,7 @@ Perch consumer trained alongside ProtoSSM).
 
 | ID | Description | Risk | Expected lift |
 |----|-------------|------|---------------|
-| B1 | **PerceiverIO over 12 windows** trained on Kaggle alongside ProtoSSM in the same notebook. d_model 256, 4 cross-attn layers, 30 epochs. Cost: ~10–15 min on top of ProtoSSM's 25–30 min. | MED | +0.002 to +0.004 |
+| B1 | **PerceiverIO over 12 windows** trained on Kaggle alongside ProtoSSM in the same notebook. d_latent=256, n_latents=16, 2 cross-attn + 4 self-attn layers, 30 epochs. Cost: ~10–15 min on top of ProtoSSM's 25–30 min. | MED | +0.002 to +0.004 |
 | B2 | **GRU dual head** like #34C but with 2-fold ProtoSSM (we proved 2-fold ProtoSSM = 0.922 in #34C2; pair with GRU at full strength). Risk: same time bottleneck. | HIGH | +0.001 to +0.003 |
 
 **Gates**:
@@ -182,6 +182,30 @@ Perch consumer trained alongside ProtoSSM).
 - B1 wall time must stay <10 min added (else displaces ResidualSSM via the 35-min gate).
 
 **Estimated work**: B1 ~2–3 days (architecture + training loop). B2 already prototyped but ruled out by 2-fold OOF weakness — only revisit if Track A succeeds and we have headroom.
+
+#### B1 — concrete design (decided 2026-04-08, post-A1-freeze)
+
+A1 is frozen at w=0.20 / LB 0.932; Track B1 is now active. Implementation
+notes that pin down the design so the next session can resume cleanly:
+
+- **Input contract** — same as ProtoSSM: per-file `(emb [N,T=12,1536], logits [N,T,234], site_ids, hours)`. B1 reads Perch logits as a side-channel via a simple front-end projection + concat with `emb`, **not** via a learned per-class fusion alpha (that's ProtoSSM's job). Same inputs, different *use* → architectural diversity at the model body without breaking the data plumbing.
+- **Architecture** — `PerceiverIOHead` in `four_track/src/b1_perceiver.py`:
+  - Input encoder: `Linear(1536+proj(234)+site_emb+hour_emb → 256)` per window.
+  - Latent bank: 16 learned latents, `d_latent=256`.
+  - 2 cross-attn (latents ← windows) + 4 self-attn (latents ↔ latents) blocks, 8 heads each, dropout 0.3.
+  - Output decoder: 12 query tokens (one per window) cross-attend back into the latents → `Linear(256 → 234)` → `(B, T=12, 234)` logits.
+  - **No taxonomy/family aux head.** ProtoSSM has one; dropping it in B1 increases architectural diversity (which is the whole reason B1 exists).
+- **Training** — mirrors `train_proto_ssm_single` so the loss landscape is comparable: focal BCE w/ `pos_weight` (capped), MSE distill against raw Perch logits, file-level Mixup after epoch 5, AdamW + OneCycleLR (`pct_start=0.1`, cosine), grad clip 1.0, SWA from `swa_start_frac × n_epochs`, early stop on `val_loss`. Config lives in new `CFG["b1_perceiver"]` / `CFG["b1_perceiver_train"]` blocks (added to the V18 CFG cell).
+- **OOF protocol** — `run_b1_perceiver_oof` reuses ProtoSSM's exact `file_groups` and `GroupKFold(n_splits=…)`, so per-fold splits match ProtoSSM 1:1 and the proto/B1 OOF correlation check is honest.
+- **Notebook integration** — three new cells, all marker-anchored (no hard-coded indices), inserted by `four_track/src/inject_b1_cell.py` which mirrors `inject_a1_cell.py`:
+  - **Cell 24b** — `# Cell 24b — Track B1 PerceiverIO training (def + OOF)` — function defs, inserted after cell 24 (ProtoSSM training defs).
+  - **Cell 31b** — `# Cell 31b — Track B1 PerceiverIO instantiate + OOF + retrain on full` — runs OOF, logs `LOGS["oof_auc_b1"]` and the proto/B1 OOF correlation, then retrains on all soundscapes. Inserted after cell 31.
+  - **Cell 36b** — `# Cell 36b — Track B1 inference + rank fusion` — runs `b1_model` on `(emb_test_files, logits_test_files, …)`, rank-fuses into `final_test_scores` via the same per-class CDF round-trip pattern as cell 37 (preserves ProtoSSM's marginals so cell 38's per-class thresholds keep their semantics). Inserted **before** cell 37 (the A1 cell), so the order is `ProtoSSM → B1 fusion → A1 fusion → postproc`.
+- **Gates** (must all hold before any LB submission):
+  - `oof_auc_proto+b1 ≥ oof_auc_proto + 0.002` after sweeping `B1_WEIGHT ∈ {0.10, 0.15, 0.20, 0.25}` on OOF.
+  - `corrcoef(oof_proto_flat.flatten(), oof_b1_flat.flatten()) < 0.97` (else B1 is seeing the same signal — kill).
+  - Notebook wall time stays under the 35-min ResidualSSM gate (B1 budget ≤10 min added).
+- **Kill criterion** — if either OOF gate fails, freeze B1, do **not** burn an LB slot, and move to **Track C1** (Perch v2 embedding extraction for `train_audio` pseudo-labels).
 
 ### Track C — ProtoSSM-as-teacher pseudo-labels on train_audio (medium-low lift)
 
