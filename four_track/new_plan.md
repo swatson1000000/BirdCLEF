@@ -154,11 +154,13 @@ residual SSM correction but before cell 37's per-class thresholds:
 | Attempt | Notebook version | Config | LB | Δ vs prior best | Verdict |
 |---|---|---|---|---|---|
 | 1 (errored) | v17 | rank fusion w=0.10, mel pre-compute | OOM | — | Bug — pre-computing all mels held ~12 GB. Did not consume an A1 attempt. |
-| **1** | **v18** | **rank fusion w=0.10, streaming mels** | **0.929** | **+0.002** | **A1 alive — passes the ≥0.929 gate.** |
+| 1 | v18 | rank fusion w=0.10, streaming mels | 0.929 | +0.002 | A1 alive — passes the ≥0.929 gate. |
+| **2** | **v19** | **rank fusion w=0.15, streaming mels** | **0.930** | **+0.001** | **Higher weight helps — new best LB.** |
 
-**Track A1 is alive.** Next action is attempt 2: sweep `w ∈ {0.15, 0.20}` to
-find the LB-optimal weight. Per the gate, do these as two separate LB
-submissions on consecutive days; pick the higher of the two as the new best.
+**Track A1 is climbing.** w=0.15 beat w=0.10 by +0.001. Next action is
+attempt 3: try `w=0.20` to see if the curve is still rising or has peaked.
+If w=0.20 ≥ 0.930, A1 still has headroom and we should continue sweeping.
+If w=0.20 regresses, freeze at w=0.15 and move to Track B1.
 
 ### Track B — Second Perch-consumer on Kaggle (medium lift)
 

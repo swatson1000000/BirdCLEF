@@ -59,7 +59,7 @@ gc.collect()
 
 A1_CKPT_DIR  = Path("/kaggle/input/birdclef-2026-a1-effb0-ckpts")
 A1_FOLDS     = [0, 1, 2, 4]
-A1_WEIGHT    = 0.10
+A1_WEIGHT    = 0.15
 A1_BATCH     = 16
 A1_N_MELS    = 224
 A1_N_FFT     = 4096
