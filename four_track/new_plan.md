@@ -156,12 +156,13 @@ residual SSM correction but before cell 37's per-class thresholds:
 | 1 (errored) | v17 | rank fusion w=0.10, mel pre-compute | OOM | — | Bug — pre-computing all mels held ~12 GB. Did not consume an A1 attempt. |
 | 1 | v18 | rank fusion w=0.10, streaming mels | 0.929 | +0.002 | A1 alive — passes the ≥0.929 gate. |
 | 2 | v19 | rank fusion w=0.15, streaming mels | 0.930 | +0.001 | Higher weight helps. |
-| **3** | **v20** | **rank fusion w=0.20, streaming mels** | **0.932** | **+0.002** | **Still climbing — new best LB.** |
+| **3** | **v20** | **rank fusion w=0.20, streaming mels** | **0.932** | **+0.002** | **New best LB.** |
+| 4 | v21 | rank fusion w=0.25, streaming mels | 0.932 | 0.000 | Flat vs w=0.20 — curve has plateaued. Freeze A1 at w=0.20. |
 
-**Track A1 keeps climbing.** w=0.20 beat w=0.15 by +0.002 (and is +0.003
-over w=0.10). The curve has not peaked yet. Next action is attempt 4: try
-`w=0.25` and likely `w=0.30` after that. Freeze A1 only when an attempt
-either regresses or stays flat vs the previous best, then move to Track B1.
+**Track A1 frozen at w=0.20 (LB 0.932).** Attempt 4 at w=0.25 stayed flat
+vs attempt 3, satisfying the "regresses or stays flat" stop condition.
+A1 is locked in at w=0.20 and the next action is **Track B1** (PerceiverIO
+Perch consumer trained alongside ProtoSSM).
 
 ### Track B — Second Perch-consumer on Kaggle (medium lift)
 
