@@ -207,6 +207,40 @@ notes that pin down the design so the next session can resume cleanly:
   - Notebook wall time stays under the 35-min ResidualSSM gate (B1 budget ≤10 min added).
 - **Kill criterion** — if either OOF gate fails, freeze B1, do **not** burn an LB slot, and move to **Track C1** (Perch v2 embedding extraction for `train_audio` pseudo-labels).
 
+#### B1 OOF protocol: structurally broken on this dataset (2026-04-08)
+
+First train-mode dry-run (notebook v22) revealed the OOF lift gate is
+**uninformative** and cannot be used as a go/no-go for B1 (or any branch):
+
+- Cell 7 filters to files with all 12 windows labeled → only **59 files**
+  (not the ~720 we'd assumed). 5 unique site groups → wildly imbalanced
+  GroupKFold splits (39/5/5/5/5).
+- ProtoSSM OOF AUC = **0.6468**, vs its known LB of **0.932**. The OOF
+  number is disconnected from LB by ~0.28 — i.e. the protocol cannot rank
+  branches at all on a 234-class problem with val folds of size 5.
+- B1 standalone OOF AUC = 0.3878 (worse than chance, expected at this fold
+  size). Diversity gate **passed** (corr=0.7115, well below 0.97).
+- The lift gate naturally drives `B1_WEIGHT_FROZEN → 0.00` because any
+  random perturbation looks bad on these tiny folds. The same gate would
+  reject ProtoSSM itself.
+
+**Decision**: bypass the OOF lift gate for B1 in submit mode and burn one
+LB slot at a small `B1_WEIGHT = 0.10` (mirrors how A1's sweep started).
+The diversity gate is still meaningful and B1 passes it. Set in
+`b1_perceiver.py` as `CFG.setdefault("b1_frozen_weight_submit", 0.10)`.
+
+**Carryover for Track C**: C2's "OOF AUC must improve vs C0" gate is
+likewise unreliable on this dataset and needs reformulating before C2
+runs. Reformulation candidates: (a) larger bootstrap on per-class AUCs,
+(b) accept any non-regressing OOF + small LB probe, (c) drop OOF entirely
+for C and budget LB slots instead.
+
+#### B1 LB results
+
+| Attempt | Notebook ver | B1_WEIGHT | LB    | Note                                      |
+|---------|--------------|-----------|-------|-------------------------------------------|
+| 1       | v23          | 0.10      | TBD   | First B1 LB probe; OOF gate bypassed      |
+
 ### Track C — ProtoSSM-as-teacher pseudo-labels on train_audio (medium-low lift)
 
 **Hypothesis**: `train_audio` has ~46K focal clips. We currently use exactly **0** of them for ProtoSSM training (ProtoSSM only sees ~720 fully-labeled `train_soundscapes` files). Pseudo-labeling these with ProtoSSM and retraining gives the model 60× more data.

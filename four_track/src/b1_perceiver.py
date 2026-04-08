@@ -84,6 +84,13 @@ CFG.setdefault("b1_perceiver_train", {
     "distill_weight":  0.05,
     "oof_n_splits":    CFG["proto_ssm_train"].get("oof_n_splits", 5),
 })
+# Submit-mode B1 fusion weight. The OOF lift gate is structurally broken on
+# this dataset (only ~59 fully-labeled files → 5 wildly imbalanced GroupKFold
+# splits → OOF AUC is uninformative for *any* branch, including ProtoSSM
+# itself which OOFs at 0.65 yet LBs at 0.932). So in submit mode we bypass
+# the gate entirely and burn one LB slot at a small w=0.10, mirroring how
+# A1's sweep started. See new_plan.md §"B1 LB results".
+CFG.setdefault("b1_frozen_weight_submit", 0.10)
 
 
 # --- PerceiverIO building blocks ---
