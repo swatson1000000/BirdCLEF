@@ -237,9 +237,15 @@ for C and budget LB slots instead.
 
 #### B1 LB results
 
-| Attempt | Notebook ver | B1_WEIGHT | LB    | Note                                      |
-|---------|--------------|-----------|-------|-------------------------------------------|
-| 1       | v23          | 0.10      | TBD   | First B1 LB probe; OOF gate bypassed      |
+| Attempt | Notebook ver | B1_WEIGHT | LB    | Note                                       |
+|---------|--------------|-----------|-------|--------------------------------------------|
+| 1       | v23          | 0.10      | 0.933 | +0.001 vs A1-only 0.932 — small lift, sweep up |
+
+**Status (2026-04-08)**: B1 confirmed additive at smallest weight. Diversity
+gate (corr=0.71) was honest; the fake OOF lift gate would have killed a
+real signal. Continue sweeping `B1_WEIGHT` upward (0.15 → 0.20 → …) until
+LB plateaus or regresses, same stop rule as the A1 sweep. Target to beat:
+**0.946** (top of LB visible to us).
 
 ### Track C — ProtoSSM-as-teacher pseudo-labels on train_audio (medium-low lift)
 
