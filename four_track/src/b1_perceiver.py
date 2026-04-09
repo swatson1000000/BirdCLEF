@@ -90,7 +90,7 @@ CFG.setdefault("b1_perceiver_train", {
 # itself which OOFs at 0.65 yet LBs at 0.932). So in submit mode we bypass
 # the gate entirely and burn one LB slot at a small w=0.10, mirroring how
 # A1's sweep started. See new_plan.md §"B1 LB results".
-CFG.setdefault("b1_frozen_weight_submit", 0.10)
+CFG.setdefault("b1_frozen_weight_submit", 0.15)
 
 
 # --- PerceiverIO building blocks ---
