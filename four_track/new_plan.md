@@ -248,12 +248,32 @@ sharply at w=0.10; the diversity gate was honest but the lift surface is
 narrow. `b1_frozen_weight_submit` reverted to 0.10 in
 `four_track/src/b1_perceiver.py`.
 
-**Next action**: Track **C1** — Perch v2 embedding extraction for the
-~46K `train_audio` focal clips, cached as a Kaggle dataset for C2's
-ProtoSSM-as-teacher pseudo-label retrain. Re-read §"Track C" and the
-"OOF protocol broken" note above before scoping C1 — C2's "OOF must
-improve" gate needs reformulating since the OOF protocol is structurally
-unreliable on this dataset. Target to beat: **0.946**.
+**Next action**: Track **C1 is complete (2026-04-09)** — 35,549 / 35,549
+train_audio clips extracted to
+`four_track/data/processed/perch_train_audio_c2/<species>/<stem>.npz`
+via `four_track/src/extract_train_audio_c2.py`, which is a faithful port
+of the postproc notebook's ONNX Perch + `MAPPED_POS`/`MAPPED_BC_INDICES`
+direct-indexing + genus-proxy logic (cells 2, 3, 5). Per-clip format is
+`{emb: (T, 1536), scores: (T, 234)}` — exactly what ProtoSSM consumes.
+253,101 total 5s windows, mean 7.12 windows/clip, 1.8 GB on disk, 206 /
+234 competition classes have at least one training clip (28 classes have
+no `train_audio` entries at all — mostly unmapped sonotypes). All clips
+capped at the first 600 s (10 min) to bound per-worker RSS — the handful
+of multi-hour field recordings would otherwise blow up memory.
+
+**Next action is Track C2** — ProtoSSM-as-teacher pseudo-labeling: run
+the current ProtoSSM (retrained on all 720 soundscapes) on the C1 cache,
+filter to `(max_conf > 0.6) ∧ (primary_label in top-3)`, then retrain
+ProtoSSM on the union of trusted soundscapes + filtered focal clips.
+**C2 gate reformulation**: the plan's original "OOF AUC must improve
+vs C0" gate is structurally broken (see "B1 OOF protocol" note above —
+only 59 fully-labeled files, 5/5/5/5/39 GroupKFold). Replacement gate
+candidates: (a) hold out 5–10 soundscape *files* as a fixed eval set
+and require strict improvement on that, (b) skip OOF entirely and burn
+one LB slot at small mix weights like B1 did, (c) filter aggressively
+enough that a retrain on just the focal clips still beats ProtoSSM
+standalone on the 59-file OOF. Default: **(b)** — matches how B1 landed,
+and the OOF on 59 files is uninformative anyway. Target to beat: **0.946**.
 
 ### Track C — ProtoSSM-as-teacher pseudo-labels on train_audio (medium-low lift)
 
@@ -265,7 +285,7 @@ unreliable on this dataset. Target to beat: **0.946**.
 
 | ID | Description | Risk | Expected lift |
 |----|-------------|------|---------------|
-| C1 | **Extract Perch v2 embeddings** for all 46K train_audio clips locally. Cache to a Kaggle dataset. | LOW | enables C2 |
+| C1 | **Extract Perch v2 embeddings** for all 46K train_audio clips locally. Cache to a Kaggle dataset. | LOW | enables C2 — **DONE 2026-04-09** |
 | C2 | **Pseudo-label C1 embeddings** with current ProtoSSM. Filter to (max_conf > 0.6) ∧ (primary_label is in top-3). Retrain ProtoSSM on union of trusted soundscapes + filtered focal clips. | MED | +0.002 to +0.005 |
 | C3 | **Iterate**: use the C2 model to re-pseudo-label, retrain again. 1–2 iterations max (diminishing returns). | LOW | +0.001 to +0.002 |
 
