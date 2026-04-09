@@ -239,13 +239,21 @@ for C and budget LB slots instead.
 
 | Attempt | Notebook ver | B1_WEIGHT | LB    | Note                                       |
 |---------|--------------|-----------|-------|--------------------------------------------|
-| 1       | v23          | 0.10      | 0.933 | +0.001 vs A1-only 0.932 — small lift, sweep up |
+| 1       | v23          | 0.10      | 0.933 | +0.001 vs A1-only 0.932                    |
+| 2       | v24          | 0.15      | 0.927 | −0.006 regression → freeze at w=0.10       |
 
-**Status (2026-04-08)**: B1 confirmed additive at smallest weight. Diversity
-gate (corr=0.71) was honest; the fake OOF lift gate would have killed a
-real signal. Continue sweeping `B1_WEIGHT` upward (0.15 → 0.20 → …) until
-LB plateaus or regresses, same stop rule as the A1 sweep. Target to beat:
-**0.946** (top of LB visible to us).
+**Frozen weight: `B1_WEIGHT = 0.10` / LB 0.933.** Per the A1 stop rule
+(freeze on first regression or plateau), B1 is locked in. The curve peaks
+sharply at w=0.10; the diversity gate was honest but the lift surface is
+narrow. `b1_frozen_weight_submit` reverted to 0.10 in
+`four_track/src/b1_perceiver.py`.
+
+**Next action**: Track **C1** — Perch v2 embedding extraction for the
+~46K `train_audio` focal clips, cached as a Kaggle dataset for C2's
+ProtoSSM-as-teacher pseudo-label retrain. Re-read §"Track C" and the
+"OOF protocol broken" note above before scoping C1 — C2's "OOF must
+improve" gate needs reformulating since the OOF protocol is structurally
+unreliable on this dataset. Target to beat: **0.946**.
 
 ### Track C — ProtoSSM-as-teacher pseudo-labels on train_audio (medium-low lift)
 
