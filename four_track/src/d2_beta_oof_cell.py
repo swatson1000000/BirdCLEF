@@ -249,6 +249,86 @@ else:
         axis=0,
     ).mean(axis=0).astype(np.float32)
 
+    # --- 3b. Compute the production "frozen rank fusion" output on the
+    #         OOF substrate. Mirrors cells 36b (B1 fusion) → 37 (A1 fusion)
+    #         exactly, so the resulting `_d2b_prod_fused` is what the LB
+    #         notebook would output on this 708-row substrate at the
+    #         frozen weights. This gives D2-β Phase 2 a trustworthy local
+    #         reference to compare its stacker against — without this, the
+    #         local gate is structurally broken (A1-alone beats rank-mean
+    #         blends on this small substrate; see project_b1_weight_sweep
+    #         memory and D2-γ null result). ---
+    _D2B_B1_WEIGHT_PROD = 0.10   # matches LB 0.933 production (new_plan.md §B1)
+    _D2B_A1_WEIGHT_PROD = 0.20   # matches LB 0.933 production (new_plan.md §A1)
+
+    def _d2b_rank_fuse(base_scores, other_ranks, w):
+        """Linear rank-mix with inverse-CDF back to base marginals.
+
+        Identical to the fusion in a1_notebook_cell.py:208-229 and
+        b1_perceiver.py CELL_36B. Preserves `base_scores`'s per-class
+        marginal distribution so downstream per-class thresholds retain
+        their semantics.
+        """
+        base = base_scores.astype(np.float32).copy()
+        base_ranks = _d2b_rank01_per_col(base)
+        fused_ranks = (1.0 - w) * base_ranks + w * other_ranks
+        out = np.empty_like(base)
+        n = base.shape[0]
+        sorted_base = np.sort(base, axis=0)
+        idx = np.clip(
+            (fused_ranks * (n - 1)).round().astype(np.int64),
+            0, n - 1,
+        )
+        for c in range(base.shape[1]):
+            out[:, c] = sorted_base[idx[:, c], c]
+        return out
+
+    # Step 1: ProtoSSM base
+    _d2b_proto_base = oof_proto_flat.astype(np.float32).copy()
+
+    # Step 2: B1 rank fusion at frozen production weight.
+    # B1's OOF gate FAILS on this substrate (kernel log: "B1 OOF gates
+    # FAILED"), so in the notebook's own train-mode run B1_WEIGHT_FROZEN
+    # would be 0.0 — but that's NOT what the LB production path does. The
+    # submit path uses the frozen-LB weight regardless. We mirror the
+    # submit path here so the local reference is apples-to-apples with
+    # what actually ships on Kaggle.
+    _d2b_b1_ranks_for_fusion = _d2b_rank01_per_col(oof_b1_flat.astype(np.float32))
+    _d2b_after_b1 = _d2b_rank_fuse(
+        _d2b_proto_base, _d2b_b1_ranks_for_fusion, _D2B_B1_WEIGHT_PROD
+    )
+
+    # Step 3: A1 rank fusion on top.
+    _d2b_prod_fused = _d2b_rank_fuse(
+        _d2b_after_b1, _d2b_a1_ranks_oof, _D2B_A1_WEIGHT_PROD
+    )
+
+    # Sanity numbers — compute macro ROC-AUC on present classes for each
+    # intermediate. Not strictly needed but extremely useful to catch
+    # structural surprises on the kernel log before downloading the npz.
+    try:
+        from sklearn.metrics import roc_auc_score as _d2b_auc
+
+        def _d2b_macro_auc(y, p):
+            present = (y.sum(axis=0) > 0) & (y.sum(axis=0) < y.shape[0])
+            if present.sum() == 0:
+                return float("nan")
+            return float(_d2b_auc(
+                y[:, present], p[:, present], average="macro"
+            ))
+
+        _d2b_auc_proto   = _d2b_macro_auc(y_flat, _d2b_proto_base)
+        _d2b_auc_after_b1 = _d2b_macro_auc(y_flat, _d2b_after_b1)
+        _d2b_auc_final   = _d2b_macro_auc(y_flat, _d2b_prod_fused)
+        _d2b_auc_a1only  = _d2b_macro_auc(y_flat, _d2b_a1_ranks_oof)
+        print(f"  [local AUC] proto-only          = {_d2b_auc_proto:.4f}", flush=True)
+        print(f"  [local AUC] proto+B1(w={_D2B_B1_WEIGHT_PROD:.2f})    = {_d2b_auc_after_b1:.4f}", flush=True)
+        print(f"  [local AUC] +A1(w={_D2B_A1_WEIGHT_PROD:.2f}) = PROD  = {_d2b_auc_final:.4f}", flush=True)
+        print(f"  [local AUC] A1-ranks alone      = {_d2b_auc_a1only:.4f}", flush=True)
+    except Exception as _e:
+        print(f"  [local AUC] skipped ({_e})", flush=True)
+        _d2b_auc_proto = _d2b_auc_after_b1 = _d2b_auc_final = _d2b_auc_a1only = float("nan")
+
     # --- 4. Dump everything to /kaggle/working/d2_beta_oofs.npz ---
     # file_groups from cell 31 holds site-ID strings (e.g. 'S08') — factorize
     # into contiguous ints so downstream LightGBM GroupKFold can consume them
@@ -262,15 +342,18 @@ else:
     _d2b_out_path = Path("/kaggle/working/d2_beta_oofs.npz")
     np.savez(
         _d2b_out_path,
-        a1_ranks        = _d2b_a1_ranks_oof.astype(np.float32),
-        b1_oof          = oof_b1_flat.astype(np.float32),
-        proto_oof       = oof_proto_flat.astype(np.float32),
-        y_true          = y_flat.astype(np.float32),
-        file_groups     = _d2b_fg_ids,
-        file_group_names= _d2b_fg_unique.astype(str),
-        fold_ids        = _d2b_fold_ids,
-        n_windows       = np.int64(N_WINDOWS),
-        a1_folds        = np.asarray(_D2B_A1_FOLDS, dtype=np.int64),
+        a1_ranks         = _d2b_a1_ranks_oof.astype(np.float32),
+        b1_oof           = oof_b1_flat.astype(np.float32),
+        proto_oof        = oof_proto_flat.astype(np.float32),
+        prod_fused       = _d2b_prod_fused.astype(np.float32),
+        y_true           = y_flat.astype(np.float32),
+        file_groups      = _d2b_fg_ids,
+        file_group_names = _d2b_fg_unique.astype(str),
+        fold_ids         = _d2b_fold_ids,
+        n_windows        = np.int64(N_WINDOWS),
+        a1_folds         = np.asarray(_D2B_A1_FOLDS, dtype=np.int64),
+        b1_weight_prod   = np.float32(_D2B_B1_WEIGHT_PROD),
+        a1_weight_prod   = np.float32(_D2B_A1_WEIGHT_PROD),
     )
     _d2b_size_mb = _d2b_out_path.stat().st_size / 1e6
     print(f"  saved → {_d2b_out_path}  ({_d2b_size_mb:.2f} MB)", flush=True)
@@ -287,6 +370,12 @@ else:
         "proto_oof_mean":     float(oof_proto_flat.mean()),
         "y_true_positives":   int(y_flat.sum()),
         "present_classes":    int((y_flat.sum(axis=0) > 0).sum()),
+        "b1_weight_prod":     float(_D2B_B1_WEIGHT_PROD),
+        "a1_weight_prod":     float(_D2B_A1_WEIGHT_PROD),
+        "auc_proto_only":     float(_d2b_auc_proto),
+        "auc_after_b1":       float(_d2b_auc_after_b1),
+        "auc_prod_fused":     float(_d2b_auc_final),
+        "auc_a1_ranks_only":  float(_d2b_auc_a1only),
         "file_size_mb":       float(_d2b_size_mb),
         "wall_time_seconds":  float(time.time() - _D2B_START),
     })
