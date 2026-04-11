@@ -10,7 +10,8 @@
   "dataset_sources": [
     "jaejohn/perch-meta",
     "brucewu1200/birdclef-2026-cvlb-assets-0911",
-    "stevewatson999/birdclef-2026-a1-effb0-ckpts"
+    "stevewatson999/birdclef-2026-a1-effb0-ckpts",
+    "stevewatson999/birdclef-2026-d2b-s1-coefs"
   ],
   "competition_sources": [
     "birdclef-2026"
