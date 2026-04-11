@@ -250,21 +250,27 @@ else:
     ).mean(axis=0).astype(np.float32)
 
     # --- 4. Dump everything to /kaggle/working/d2_beta_oofs.npz ---
-    _d2b_fold_ids = np.repeat(
-        np.asarray(file_groups, dtype=np.int64), N_WINDOWS
-    )
+    # file_groups from cell 31 holds site-ID strings (e.g. 'S08') — factorize
+    # into contiguous ints so downstream LightGBM GroupKFold can consume them
+    # directly. Preserve the original string names as a side array so the
+    # mapping is auditable.
+    _d2b_fg_names = np.asarray(file_groups)
+    _d2b_fg_unique, _d2b_fg_ids = np.unique(_d2b_fg_names, return_inverse=True)
+    _d2b_fg_ids = _d2b_fg_ids.astype(np.int64)
+    _d2b_fold_ids = np.repeat(_d2b_fg_ids, N_WINDOWS)
 
     _d2b_out_path = Path("/kaggle/working/d2_beta_oofs.npz")
     np.savez(
         _d2b_out_path,
-        a1_ranks   = _d2b_a1_ranks_oof.astype(np.float32),
-        b1_oof     = oof_b1_flat.astype(np.float32),
-        proto_oof  = oof_proto_flat.astype(np.float32),
-        y_true     = y_flat.astype(np.float32),
-        file_groups= np.asarray(file_groups, dtype=np.int64),
-        fold_ids   = _d2b_fold_ids,
-        n_windows  = np.int64(N_WINDOWS),
-        a1_folds   = np.asarray(_D2B_A1_FOLDS, dtype=np.int64),
+        a1_ranks        = _d2b_a1_ranks_oof.astype(np.float32),
+        b1_oof          = oof_b1_flat.astype(np.float32),
+        proto_oof       = oof_proto_flat.astype(np.float32),
+        y_true          = y_flat.astype(np.float32),
+        file_groups     = _d2b_fg_ids,
+        file_group_names= _d2b_fg_unique.astype(str),
+        fold_ids        = _d2b_fold_ids,
+        n_windows       = np.int64(N_WINDOWS),
+        a1_folds        = np.asarray(_D2B_A1_FOLDS, dtype=np.int64),
     )
     _d2b_size_mb = _d2b_out_path.stat().st_size / 1e6
     print(f"  saved → {_d2b_out_path}  ({_d2b_size_mb:.2f} MB)", flush=True)
