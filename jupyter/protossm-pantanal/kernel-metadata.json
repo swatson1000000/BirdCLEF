@@ -9,8 +9,8 @@
   "enable_internet": false,
   "dataset_sources": [
     "jaejohn/perch-meta",
-    "stevewatson999/birdclef-2026-a1-effb0-ckpts",
-    "stevewatson999/birdclef-2026-protossm-b1-ckpts"
+    "brucewu1200/birdclef-2026-cvlb-assets-0911",
+    "stevewatson999/birdclef-2026-a1-effb0-ckpts"
   ],
   "competition_sources": [
     "birdclef-2026"
