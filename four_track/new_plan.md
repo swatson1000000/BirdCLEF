@@ -878,3 +878,62 @@ nohup bash scripts/train_a1_5fold.sh > log/train_a1_5fold_$(date +%Y%m%d_%H%M%S)
 ```
 
 While A1 trains, **Track C2** can run as a CPU-side data-prep job in parallel (it doesn't contend for the GPU once the pseudo-label dump is done).
+
+---
+
+## 8. Pantanal reverse-ablation (active 2026-04-15)
+
+**Problem**: `jupyter/protossm-pantanal/` was snapshotted at V19
+(`bfceb494c4`) with the full pantanal-derived change set. That V19
+notebook **timed out on the LB scorer**. A leaner variant (the working
+tree at conversation start) scored **LB 0.931** without timing out.
+
+**Goal**: identify which specific pantanal change(s) push the notebook
+over the LB time budget (and/or regress score) by re-applying them one
+at a time on top of the LB 0.931 baseline.
+
+**Baseline commit** `b33ec1a7e2` — pure LB 0.931 state. Metadata:
+`brucewu1200/birdclef-2026-cvlb-assets-0911` +
+`stevewatson999/birdclef-2026-a1-effb0-ckpts` (not V19's
+`protossm-b1-ckpts`).
+
+**Workflow**:
+1. One commit per pantanal candidate, applied on top of the baseline.
+2. After each commit, push `stevewatson999/birdclef-2026-pantanal` to
+   Kaggle via `kaggle kernels push` and measure LB + wall time.
+3. If the commit regresses LB or causes a timeout: `git revert <sha>`
+   and move to the next candidate. If it's neutral/positive: keep it
+   and layer the next candidate on top.
+4. Each commit is small and isolated so that `git revert` returns the
+   tree to a clean known-good state (the baseline or the last
+   accepted ablation), never to V19.
+
+**Candidate order** (smallest-net-delta first):
+
+| # | Candidate | HEAD cell | Δ lines | Status |
+|---|---|---|---|---|
+| P10 | Score Fusion `.to(DEVICE)` / `.cpu()` | Score Fusion | +1 | **applied** (`d0fc7119db`) |
+| P5  | Cell 5 Perch inference | Cell 5 | +2 | pending |
+| P4  | Cell 4 helpers (V16/V17 NEW) | Cell 4 | +8 | pending |
+| P6  | Cell 6 Perch cache | Cell 6 | +11 | pending |
+| P7  | Cell 24 ProtoSSM v4 training loop | Cell 24 | +18 | pending |
+| P9  | Cell 31b PerceiverIO OOF+retrain | Cell 31b | +16 | pending |
+| P11 | Cell 17 A1 SED fusion | Cell 17 | +17 | pending |
+| P8  | Cell 31 Instantiate+train ProtoSSM v4 | Cell 31 | +27 | pending |
+| P2  | V18 CFG UPGRADES (CPU-tuned) variant | V18 CFG block | (swap 47L → 37L) | pending |
+| P3  | Cell 3 Load Perch TF-only path | Cell 3 | (swap) | pending |
+| P1  | Cell 0 install (TF 2.20 only, no ONNXRuntime) | Cell 0 | (swap) | pending |
+
+**Explicitly out of scope** (baseline-only edits, not pantanal-added
+content — do not revert):
+- Cell 2 Imports (WORK has +30L over HEAD)
+- Cell 18 postproc (WORK +7L)
+- Residual SSM (WORK +1L)
+
+**Results log**:
+
+| Commit | Candidate | LB | Wall time | Timeout? | Verdict |
+|---|---|---|---|---|---|
+| `b33ec1a7e2` | baseline | 0.931 | (known good) | no | pass |
+| `d0fc7119db` | P10 | TBD | TBD | TBD | TBD |
+
