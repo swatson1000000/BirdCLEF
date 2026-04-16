@@ -935,5 +935,28 @@ content — do not revert):
 | Commit | Candidate | LB | Wall time | Timeout? | Verdict |
 |---|---|---|---|---|---|
 | `b33ec1a7e2` | baseline | 0.931 | (known good) | no | pass |
-| `d0fc7119db` | P10 | 0.916 | n/a | no | **fail** (−0.015) — reverted |
+| `d0fc7119db` | P10 | 0.916 | n/a | no | **fail** (−0.015) — reverted in `4d78564641` |
+| `1c73f0f989` | P6 | (no push) | n/a | n/a | **pass by inspection** — additive fallback paths only, existing resolver already finds cache on Kaggle so new entries are unreachable; no behavior change expected |
+
+**Closeout (2026-04-15):** reverse-ablation exhausted without finding a
+score-positive candidate. Byte-for-byte comparison of baseline's "V18 CFG
+UPGRADES" cell vs V19's version confirms that **the V18 architectural
+upgrades (`d_model=320`, `n_ssm_layers=4`, `n_prototypes=2`) are already
+in the LB 0.931 baseline**. Every remaining V19 delta falls into one of:
+
+- **no-op plumbing** (P1, P3, P5, P6, P7, P9, P11a) — alternate Kaggle
+  input layouts, `.to(DEVICE)` calls on a CPU-only kernel, ckpt-loader
+  fallbacks that never resolve with baseline metadata
+- **speed-for-score trades** (P2, P11b) — fewer TTA shifts, smaller MLP
+  probe, fewer folds; all intended as timeout mitigations for V19's
+  heavier training budget, not score wins
+- **speed-only wins** (P11c PCEN vectorization) — neutral on LB unless
+  paired with a "spend the saved time" change (more TTA / folds)
+- **confirmed regressions** (P10) — `.to(DEVICE)/.cpu()` in Score Fusion,
+  −0.015 on V22
+
+Therefore pantanal cannot close the 0.931 → 0.951 leaderboard gap. The
++0.020 target must come from **Tracks A / B / C / D** in the upper
+sections of this plan (new signal sources, not rearranging the existing
+ProtoSSM stack).
 
