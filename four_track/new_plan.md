@@ -935,5 +935,5 @@ content — do not revert):
 | Commit | Candidate | LB | Wall time | Timeout? | Verdict |
 |---|---|---|---|---|---|
 | `b33ec1a7e2` | baseline | 0.931 | (known good) | no | pass |
-| `d0fc7119db` | P10 | TBD | TBD | TBD | TBD |
+| `d0fc7119db` | P10 | 0.916 | n/a | no | **fail** (−0.015) — reverted |
 
