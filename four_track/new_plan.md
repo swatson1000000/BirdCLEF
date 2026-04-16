@@ -1041,3 +1041,105 @@ raw audio)**, not Track C. Rationale:
 ~2–4 days of training work before its first LB slot. Plan for at most
 one submission per LB-probe day until we know whether S1 lands.
 
+---
+
+## 10. Pre-trained ProtoSSM/B1 checkpoints (side-project, 2026-04-15)
+
+**Problem:** ProtoSSM and B1 PerceiverIO train from scratch every
+submission inside the 90-min Kaggle CPU budget. This caps them at
+~30 epochs / small model / no hyperparameter sweeps. The 0.931 → 0.951
+gap likely requires more model capacity or training than the budget
+allows.
+
+**Key discovery:** `jaejohn/perch-meta` is a Kaggle dataset containing
+Perch v2 embeddings+logits for all 59 train_soundscape files (708 rows),
+extracted *on Kaggle* on 2026-03-13. The production notebook already
+loads these for training (Cell 6 `resolve_full_cache_paths`). Verified
+2026-04-15 that the local cache (`data/processed/perch_cache/`) does
+NOT match — max embedding diff = 0.118, confirming the local-vs-Kaggle
+mismatch is real and the `jaejohn/perch-meta` copy is the authoritative
+Kaggle-extracted version.
+
+**Implication:** we can train ProtoSSM and B1 *locally* on the
+Kaggle-extracted features with no time limit, upload the checkpoints,
+and load them in the submission notebook — skipping in-kernel training
+entirely. This sidesteps the 90-min bottleneck without hitting the
+embedding-mismatch wall (because the training features *are* Kaggle
+features, just downloaded).
+
+**This is a side-project**: it does not modify the current production
+pipeline until Step 5. Steps 1–4 are purely additive.
+
+### Steps
+
+**Step 1 — Local training script** (`four_track/src/train_protossm_local.py`)
+- Loads features from the downloaded `jaejohn/perch-meta` dataset
+  (copied to `four_track/data/kaggle_perch_cache/`)
+- Loads labels from `train_soundscapes_labels.csv` via the competition
+  data directory
+- Replicates the exact ProtoSSM v5 architecture from the notebook
+  (Cell 22/24) — same `d_model`, `d_state`, `n_ssm_layers`, etc.
+- Trains with full freedom: 200+ epochs, LR sweep, multi-seed,
+  optionally larger `d_model` / more layers
+- GroupKFold OOF on the same 8-site split the notebook uses
+- Saves best checkpoint as `protossm_pretrained.pt`
+- Estimated local runtime: minutes (708 rows is tiny)
+
+**Step 2 — Local B1 training** (same script or
+`four_track/src/train_b1_local.py`)
+- Same feature source, same labels, same GroupKFold
+- Replicates PerceiverIO architecture from Cell 24b
+- Saves `b1_pretrained.pt`
+
+**Step 3 — Upload checkpoints**
+- `kaggle datasets create` → `stevewatson999/birdclef-2026-pretrained-ckpts`
+- Contains `protossm_pretrained.pt` + `b1_pretrained.pt`
+- Add to `kernel-metadata.json:dataset_sources`
+
+**Step 4 — Guarded load path in notebook**
+- Cell 24 (ProtoSSM training): wrap in
+  `if ckpt.exists(): model.load_state_dict(...) else: <current training>`
+- Cell 31b (B1 training): same pattern (P9 in §8 already had this for
+  B1 — reuse the structure but point at the new dataset)
+- Without the checkpoint dataset attached, notebook behaves identically
+  to today
+
+**Step 5 — LB probe**
+- `kaggle kernels push` with checkpoint dataset attached
+- Compare LB vs 0.931 baseline
+- If regression: detach dataset → instant revert to current behavior
+
+### What this unlocks
+
+| Parameter | Current (in-kernel) | With pre-trained ckpts |
+|---|---|---|
+| ProtoSSM epochs | 30 (submit caps) | 200+ |
+| ProtoSSM d_model | 320 (time-limited) | 512+ if data supports it |
+| B1 epochs | ~20 | 100+ |
+| Hyperparameter sweeps | impossible (1 config/submission) | unlimited local |
+| Multi-seed ensembling | impossible | average N seeds |
+| Freed Kaggle wall time | 0 | ~25 min → more TTA / A1 folds |
+
+### Risks
+
+1. **Feature staleness**: if Kaggle updates TF/ONNX runtime, the
+   `jaejohn/perch-meta` features may drift from live-extracted test
+   features. Mitigation: re-run extraction kernel (~30 min). Low
+   frequency risk — Kaggle env changes are rare mid-competition.
+2. **Overfitting on 708 rows**: more epochs + bigger model on tiny data
+   could overfit. Mitigation: OOF monitoring + early stopping + SWA.
+   The notebook already has these; the local script replicates them.
+3. **Architecture drift**: if the local script's model definition
+   diverges from the notebook's, `load_state_dict` will fail with a
+   key mismatch. Mitigation: import the model class from a shared
+   source file used by both notebook cell and local script.
+
+### Interaction with other tracks
+
+- **D2-β S1 probe** (§9, v46 running now): independent. S1 is a
+  post-processing layer over rank-fused outputs; pre-trained ckpts
+  change the model outputs it consumes but don't conflict.
+- **Track A SED**: independent — A1 operates on raw mel spectrograms.
+- **Track C**: if pre-trained ProtoSSM is better, C's pseudo-label
+  teacher is also better. Complementary.
+
