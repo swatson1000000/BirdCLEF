@@ -960,3 +960,84 @@ Therefore pantanal cannot close the 0.931 → 0.951 leaderboard gap. The
 sections of this plan (new signal sources, not rearranging the existing
 ProtoSSM stack).
 
+---
+
+## 9. Next action after §8 closeout (2026-04-15)
+
+**Context:** public LB leader is at **0.951**; our production baseline is
+**0.931**; minimum useful gain per submission is **+0.020**. §8 confirmed
+the pantanal branch cannot deliver this, so the next submission has to
+come from a track that introduces new signal, not one that rearranges
+ProtoSSM/A1/B1 plumbing.
+
+### Chosen next step: resume D2-β Phase 2 S1 stacker LB probe
+
+**Why this first** (ahead of Track A SED or Track C pseudo-labels):
+
+1. **Fully staged already.** Commit `ce2594d496` (2026-04-11) left the
+   repo in a ready-to-push state:
+   - `four_track/src/d2_lgbm_stack.py` has `fit_final_s1()` / `apply_s1()`
+     and the fitted per-class logistic coefs live in
+     `four_track/data/d2_beta_s1_coefs.npz`.
+   - The kernel-side cell `four_track/src/d2_s1_kernel_cell.py` is
+     already injected into the canonical `protossm-postproc` notebook
+     and is a no-op in `MODE="submit"` unless the coef dataset is
+     attached.
+   - `kernel-metadata.json` changes + coef-dataset upload path were
+     documented in §D2-β Phase 2. Only action left is
+     `kaggle kernels push` and measure LB.
+2. **Answers a live gate, not builds a new one.** Phase 1.5 found the
+   708-row local OOF substrate is structurally broken (LB-production
+   rank fusion scored 0.6699 locally vs A1-alone 0.7359). That makes
+   the local S1 lift of +0.1211 **untrustworthy as a local gate**. The
+   only way to learn whether S1 is real is one LB slot. Every day we
+   don't push it, the question stays open.
+3. **Cheap to revert.** If S1 regresses LB, a single commit revert
+   returns us to LB 0.931 baseline. No code is replaced, only one cell
+   added and one dataset attached.
+4. **Unblocks D3.** If S1 passes, per-taxon ensemble weights (D3) become
+   a natural follow-on using the same OOF substrate.
+
+**Concrete steps for the next session:**
+
+1. Re-grep both `four_track/new_plan.md` and `../plan.md` for
+   "must be trained on Kaggle" / DOA / embedding-mismatch hazards per
+   `feedback_regrep_constraints`. Verify the S1 coefs are a *local*
+   post-processing fit over Kaggle-produced OOF scores (they are —
+   fit on `four_track/data/d2_beta_oofs.npz` which came from Kaggle
+   kernel v26), so the hazard doesn't apply; but document the check.
+2. Confirm the `protossm-postproc` canonical notebook on disk matches
+   the submit-mode production state (MODE="submit", D2-β OOF-dump cell
+   present as no-op, S1 cell present as no-op without coefs dataset).
+3. Upload `four_track/data/d2_beta_s1_coefs.npz` to a private dataset
+   `stevewatson999/birdclef-2026-d2b-s1-coefs` and add it to
+   `jupyter/protossm-postproc/kernel-metadata.json:dataset_sources`.
+4. `kaggle kernels push` on `protossm-postproc`; submit to LB.
+5. Record outcome in the D2-β Phase 2 section and in the top-of-file
+   LB submission history.
+
+**Decision gate on the result:**
+
+| LB outcome | Verdict | Next step |
+|---|---|---|
+| ≥ 0.951 | 🎉 single-slot close of the gap | lock S1 in production, resume other tracks for further gain |
+| 0.951 > LB > 0.933 | partial win | keep S1, proceed to D3 (per-taxon weights) for the rest of +0.020 |
+| 0.931 ≤ LB ≤ 0.933 | neutral | revert S1, conclude D2-β exhausted, pivot to Track A SED |
+| < 0.931 | regression | revert S1 + document, pivot to Track A SED |
+
+**If S1 is neutral/regressive**, the follow-on is **Track A (SED on
+raw audio)**, not Track C. Rationale:
+
+- Track A introduces a fundamentally new signal path (mel-spectrogram
+  CNN/SED on raw audio, independent of Perch embeddings) — the class
+  of model change that typically moves LB by 0.01–0.03 on BirdCLEF.
+- Track C (pseudo-labels) requires a working student that can consume
+  Kaggle-produced Perch features without the embedding-mismatch trap;
+  C1 has the feature extraction staged (commit `a6ffebdeca`) but C2
+  is still flagged KILLED in §Track C. Reviving it is a bigger design
+  lift than starting Track A.
+
+**Budget:** the S1 probe consumes one LB submission. Track A takes
+~2–4 days of training work before its first LB slot. Plan for at most
+one submission per LB-probe day until we know whether S1 lands.
+
