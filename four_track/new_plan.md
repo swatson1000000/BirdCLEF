@@ -1,7 +1,7 @@
 # BirdCLEF+ 2026 — Plan to reach LB 0.942
 
 **Author**: 2026-04-06
-**Current LB high**: **0.933** (v75 = A2 self-trained, A1-as-teacher; sig-mean fold reduction)
+**Current LB high**: **0.949** (kojimar 0-949 clone, 2026-05-24) — see §44. Prior milestones: mtoshidesu clone 0.944 (§42); v75 0.933 (own pipeline, §35).
 **Target LB**: **0.942** (+0.009)
 **Status**: Aggressive — see §1 for honest feasibility framing.
 
@@ -1316,3 +1316,66 @@ How much do you actually care about climbing past 0.944 vs banking +0.011 and st
 - `project_sonotype_shrinkage_neutral` — v80 added sonotype + non-Aves shrinkage, LB Δ=0
 - `project_gate3_only_lb_regressed` — v81 +0.005 OOF → −0.003 LB; matched OOF substrate twice-confirmed unreliable for A1-vs-ProtoSSM blend tuning
 - `project_mtoshidesu_clone_reproduced_944` — clone gave +0.011 in one slot; meta-lesson on testing the right UNIT
+
+---
+
+## §44 — kojimar 0-949 clone → LB 0.949, new floor (2026-05-24 ~16:50 EDT)
+
+**Pivot extended.** After the mtoshidesu clone (0.944), goal recalibrated to
+"as high as we can credibly get" (user's "+0.02" → 0.964 was above public #1,
+not reachable via clones). Cloned the highest-claiming available public
+notebook `kojimar/0-949-lb-birdclef-2026-prior-axis-rank-fusion` verbatim →
+**LB 0.949** (+0.005 over mtoshidesu clone, +0.016 over v75). No haircut.
+
+| | LB |
+|---|---:|
+| v75 (own pipeline) | 0.933 |
+| mtoshidesu clone | 0.944 |
+| **kojimar 0-949 clone** | **0.949** |
+| public #1 (Yannan Chen) | 0.963 |
+| published clone ceiling | ~0.949 |
+
+**Kernel:** `stevewatson999/bc2026-kojimar-949-clone` v1. Staging:
+`jupyter/kojimar-949-clone/`. Sources: tuckerarrants distilled-SED +
+waveform-cache, jaejohn perch-meta, tuckerarrants perch-v2-no-dft-onnx,
+rishikeshjani perch-onnx, hideyukizushi sgkfk + the reprod train kernel,
+ashok205 tf-wheels, google Perch model. Same Perch+ProtoSSM+SED base as
+mtoshidesu + better postproc (xSED 0.6/0.4, Karnakbayev PowerOpt base,
+prior-axis rank-power, sonotype mirror, adaptive thresh). One pipeline +
+cheap postproc → fits 90-min (nina EoS meta-blends time out).
+
+**Submission lesson:** final output is `submission.csv` (last cell). The
+notebook also writes byte-identical `subm_karnakbayev_power_optimization.csv`
+(the `_file_name_submission` intermediate). Kaggle UI defaults to the
+intermediate name → "could not find provided output file". Submit via CLI:
+`kaggle competitions submit birdclef-2026 -k <kernel> -v 1 -f submission.csv -m "..."`.
+
+**Ceiling reality:** searched 2026-05-24, no public notebook claims >0.949.
+The 0.956–0.963 LB teams do not publish. That gap is NOT credibly closable by
+cloning. Memory: [[project_kojimar_949_clone_new_floor]].
+
+### PICK UP HERE (2026-05-24 ~16:50 EDT — kojimar clone 0.949 is the new floor)
+
+> All prior PICK UP HERE sections invalidated.
+
+**Current best LB: 0.949** (kojimar clone v1). Slots: 3/5 used today
+(v81, mtoshidesu clone, kojimar clone). ~2 left, resets 00:00 UTC.
+Deadline 2026-06-03.
+
+**Remaining credible options (all approaching diminishing returns):**
+1. Clone `pilkwang/birdclef-2026-acoustic-prior-field-fusion` (~0.949 claim,
+   DIFFERENT branch mix: yukiZ Perch/SSM + v6 prior-field + optional BirdNET).
+   1 slot. Might match/slightly beat 0.949, or give a diverse 2nd final pick.
+2. In-kernel ensemble of two diverse 0.949-class pipelines (engineering;
+   kojimar vs mtoshidesu are too correlated to help — same base. pilkwang is
+   more diverse). Marginal +0.001–0.002, real effort.
+3. Lock 0.949 as Pick A; choose Pick B (diversity hedge for private LB).
+
+**Final-submission picks (Kaggle takes 2):** Pick A = best public (0.949
+kojimar clone). Pick B = diversity hedge — but everything is same family;
+pilkwang (if cloned, different branch mix) would be a marginally better
+hedge than v75.
+
+**Don'ts:** no piecewise lever ports onto our own pipeline (9-slot failure);
+no new training (all training levers exhausted); the 0.956+ gap is not
+clone-reachable.
