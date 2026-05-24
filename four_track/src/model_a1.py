@@ -18,6 +18,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import timm
 
 # Make the parent BirdCLEF/src/ importable so we can pull config (paths,
@@ -80,6 +81,7 @@ class BirdSEDModelA1(nn.Module):
         att_dropout: float = 0.3,
         mixstyle_p: float = 0.5,
         mixstyle_alpha: float = 0.3,
+        multi_layer_gem: bool = False,
     ):
         super().__init__()
 
@@ -96,24 +98,42 @@ class BirdSEDModelA1(nn.Module):
         # Concretely: we register a forward hook on backbone.blocks[1] (the
         # second EfficientNet block) so the hook fires once per forward pass,
         # perturbing the feature map in place during training only.
+        self.multi_layer_gem = multi_layer_gem
+        # Use negative indices (last stage / last two stages) so non-EfficientNet
+        # backbones with different stage counts (ConvNeXt: 4 stages; MobileViT:
+        # variable) work without per-arch special-casing. For EffNet B0/B3/B4
+        # (5 stages), -1 == 4 and -2 == 3 — production behavior preserved.
+        out_indices = (-2, -1) if multi_layer_gem else (-1,)
+
         self.backbone = timm.create_model(
             backbone_name,
             pretrained=True,
             features_only=True,
-            out_indices=(4,),
+            out_indices=out_indices,
             in_chans=in_channels,
         )
 
         self.mixstyle = FrequencyMixStyle(p=mixstyle_p, alpha=mixstyle_alpha)
         self._register_mixstyle_hook()
 
-        # Infer backbone output channel count via one dummy forward pass
+        # Infer backbone output channel count(s) via one dummy forward pass.
+        # In multi_layer_gem mode we concat blocks 3+4 after GeM and (for
+        # block 3) adaptive time-pool down to block-4's T.
         with torch.no_grad():
             dummy = torch.zeros(1, in_channels, config.N_MELS, 512)
-            feat  = self.backbone(dummy)[-1]          # (1, C, F', T')
-            c_out = feat.shape[1]
+            feats = self.backbone(dummy)              # list of (1, C_k, F'_k, T'_k)
+            if multi_layer_gem:
+                c_out = sum(f.shape[1] for f in feats)
+            else:
+                c_out = feats[-1].shape[1]
 
-        self.gem_pool = GEMFrequencyPool(p=gem_p)
+        if multi_layer_gem:
+            # One GeM per scale so each learns its own p.
+            self.gem_pools = nn.ModuleList(
+                [GEMFrequencyPool(p=gem_p) for _ in feats]
+            )
+        else:
+            self.gem_pool = GEMFrequencyPool(p=gem_p)
         self.cls_conv = nn.Conv1d(c_out, n_classes, kernel_size=1)
         self.att_conv = nn.Sequential(
             nn.Conv1d(c_out, c_out, kernel_size=3, padding=1, bias=False),
@@ -153,8 +173,18 @@ class BirdSEDModelA1(nn.Module):
 
     def forward(self, x: torch.Tensor) -> dict:
         """x: (B, 3, N_MELS, T)"""
-        feat = self.backbone(x)[-1]              # (B, C, F', T')
-        feat = self.gem_pool(feat)               # (B, C, T')
+        feats = self.backbone(x)                 # list of (B, C_k, F'_k, T'_k)
+        if self.multi_layer_gem:
+            target_t = feats[-1].shape[-1]
+            pooled = []
+            for f, gem in zip(feats, self.gem_pools):
+                p = gem(f)                        # (B, C_k, T'_k)
+                if p.shape[-1] != target_t:
+                    p = F.adaptive_avg_pool1d(p, target_t)
+                pooled.append(p)
+            feat = torch.cat(pooled, dim=1)       # (B, sum C_k, T')
+        else:
+            feat = self.gem_pool(feats[-1])       # (B, C, T')
 
         frame_logits = self.cls_conv(feat).permute(0, 2, 1)   # (B, T', n_classes)
         att_logits   = self.att_conv(feat).permute(0, 2, 1)   # (B, T', n_classes)

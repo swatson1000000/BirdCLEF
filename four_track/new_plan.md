@@ -1,1145 +1,1318 @@
 # BirdCLEF+ 2026 — Plan to reach LB 0.942
 
 **Author**: 2026-04-06
-**Current LB**: 0.927 (`protossm-yuriy929` v16, ProtoSSM + Perch v2 + MLP probes)
-**Target LB**: **0.942** (+0.015)
+**Current LB high**: **0.933** (v75 = A2 self-trained, A1-as-teacher; sig-mean fold reduction)
+**Target LB**: **0.942** (+0.009)
 **Status**: Aggressive — see §1 for honest feasibility framing.
+
+> **History archive:** §1 through §28 of this plan (the full pre-A3 journal, ~14k lines covering the v16→v75 progression, all probes, kills, and decisions through 2026-05-16 morning) live in `docs/new_plan_history.md`. Grep that file for context on any pre-A3 experiment. This file keeps only §1 (load-bearing reality check), §29 (AST closeout + rank-mean finding), §30 (A3-recursive launch), §31 (A3 kill + cross-arch probe launch), §32 (cross-arch CLOSEOUT), §33 (Cerrado-geo XC pretrain committed), §34 (Chapter 10 ensembling audit + Tier 1 plan), and the current PICK UP HERE.
 
 ---
 
-## 1. Reality assessment — what 0.942 means
+## ⛔ Killed directions — DO NOT propose without new evidence
+
+Grep this table before recommending any direction. Each entry has a memory and/or plan-history pointer.
+
+| Direction | Killed | Why | Memory / pointer |
+|---|---|---|---|
+| **Perch-as-teacher** for pseudo-labels | #34E (LB −0.008) + plan L26 constraint | Perch logits too noisy; local Perch embeddings ≠ Kaggle Perch embeddings | docs/new_plan_history.md L26-27, §28 |
+| **BirdNET solo or filter** | §24 (LB 0.742 vs v73 0.929 = −0.187) | Aves-only taxonomy mismatch with BC2026's broader taxonomy | `feedback_encoder_taxonomy_must_match_lb` |
+| **AST (Audio Spectrogram Transformer)** in production | §29.5 (CPU inference 44s/file = 6× over 90-min Kaggle cap) | 86M params @ seq=1024 is architecturally infeasible on CPU | `feedback_ast_cpu_infeasible` |
+| **EffNetV2-S as A1/A2 backbone** | §14.19 (V2-S 4-fold v71 timeout 101min; A3-v1/v2 val 0.687-0.736 vs 0.77 gate) | Both timing AND quality fail; reverted to B0 | docs/new_plan_history.md §14.19 + L433-513 |
+| **L1 noisy-student cross-arch** | §14.9 (LB 0.930 vs 0.931 baseline, val leakage) | Within ±0.005 noise; gate-fail | docs/new_plan_history.md §14.9 |
+| **L3 Quantile-Mix α=0.5** | §14.8.L3-probe (LB −0.006) | Probability + rank blend regressed | `feedback_check_plan_before_recommending` |
+| **Per-fold temperature scaling** | §25.13 (no broader-pool gain) | Calibration headroom exhausted | `feedback_min_oof_delta_to_burn_slot` |
+| **Per-class isotonic on existing components** | §25.9 (max +0.01 broader-pool, below +0.05 gate) | Doesn't clear necessary-condition gate | `feedback_min_oof_delta_to_burn_slot` |
+| **Weight re-optimization on existing stack** | §25.11 (max +0.0035 on linear surrogate) | Exhausted | `feedback_min_oof_delta_to_burn_slot` |
+| **v50 + v73 dual ensemble** | §25.13 (best blend keeps w_v50=0) | v73 dominates | `feedback_min_oof_delta_to_burn_slot` |
+| **Within-arch rank-mean fold reduction** | §29.4 / v76 (LB 0.932 vs v75 0.933 = −0.001, null) | A2 folds well-calibrated to each other; cross-arch is where rank-mean wins | `reference_cross_arch_rank_mean_fusion` |
+| **Restructuring kernel data-shape to broader-pool OOF** | §29 audit | No sig-mean cross-arch stage exists in production to audit; `ENSEMBLE_WEIGHT_PROTO = 0` makes Cell 39 proto×mlp a no-op | This file §29 |
+| **Locally-trained Perch-consuming students** | #32 (LB 0.922), #34A (LB 0.912) | Embedding mismatch | docs/new_plan_history.md L26 |
+| **Recursive A3 self-training (A2-as-teacher)** | §31 ensemble OOF 0.7935 vs A2 0.8402 (Δ −0.0467) | A2's calibration drift (diffuse probs) compounds when A2 teaches a new student; top-K=5 rescue didn't recover. Don't try A4. | This file §31 |
+| **Cross-arch fusion (CNN/transformer) on this recipe family** | §32 — 3 attempts, all gate-fail | AST × A2 = +0.0227 (best ever); ConvNeXt-Pico × A2 = +0.0061; MobileViT-S × A2 = +0.0077 (best of 3 recipes incl. transformer-recipe retry that landed at 0.7350, −0.063 below the lr=5e-4 retry). Structural ceiling — same data + same labels + mel front-end → mean_corr ≈ 0.35–0.40 floor, fusion gain ≤ +0.023 ceiling, can't clear +0.05 gate | This file §32 |
+| **Plain L2-redux Aves-corpus-at-scale (XC v3 pretrain on B0)** | §18.7 (history) — smoke val_v2=0.7317 vs ImageNet 0.7414 = −0.010 below baseline | "More bird audio at scale" mechanism falsified. Don't re-run plain XC v3 pretrain. See §33 for the Cerrado-geo-filtered variant that's a *different* mechanism (acoustic-environment match) | docs/new_plan_history.md §18.7 |
+| **Cerrado-geo XC pretrain on B0** | §33 (2026-05-18) — Phase D 5-fold standalone 0.7182; best A2-fusion 0.8410 rank-mean w=0.10; gap to 0.8902 gate = −0.0492 | Acoustic-environment-match mechanism falsified. Sixth convergent kill in the bird-audio-pretrain-transfers-to-BC2026 class (L2 / L2-redux / iNat / Perch / BirdNET / Cerrado) | `project_xc_pretrain_lever_exhausted` |
+| **Operator-swap ensembling on existing OOFs (Tier 1)** | §34 (2026-05-18) | Best Tier 1 op was AST × A2 rank-mean (already known from §29.3; AST is unshippable). Shippable best = MobileViT × A2 rank-mean = 0.8480; all variants gate-fail. Mechanism: averaging-operator changes within same OOF pool can't cross the +0.05 gate | `feedback_min_oof_delta_to_burn_slot` |
+| **Multi-seed A2 bagging (Tier 2)** | §34 (2026-05-20) — 3-seed × 5-fold = 15 ckpts; best 0.8538 (3-seed-sigmean rank-mean); gate-fail by −0.0364 | Ch 10 pp 388's lone untried DL-diversity lever. Adds genuine seed-to-seed variance but caps at +0.014 broader-pool — within-arch ceiling, same as cross-arch +0.023 ceiling from §32. Don't propose seed 45 (Ch 10 implies diminishing returns past 3) | `project_multiseed_bagging_exhausted` |
+| **L3 multi-recipe SED bag (A2 ⊕ L3-prec)** | §35 (2026-05-21) — 2-recipe bag regresses vs stronger standalone under both operators (sig-mean −0.022, rank-mean −0.009). L3-prec alone 0.8700, bag-sig 0.8481, bag-rank 0.8608 | Recipe-diversity-within-same-backbone hypothesis falsified. The +0.030 broader-pool gain is recipe *upgrade*, not diversity. (c)(d)(e) won't reverse the sign | `project_l3_multirecipe_bag_killed` (TBD) + this file §35 |
+
+---
+
+## 1. Reality assessment — RECALIBRATED 2026-05-20 from actual BC2026 public LB
+
+**Prior version of §1 cited stale prior-year LB numbers** (Yuriy 0.929 / yuanzhe zhou 0.9334 were from a previous competition or earlier snapshot). Actual current public leaderboard, fetched 2026-05-20 14:00 EDT:
 
 | | LB |
 |---|---|
-| Our best | **0.927** |
-| Top public notebook (Yuriy 0.929) | **0.929** |
-| Top public ceiling we can adapt to | ~0.929 |
-| **Our target** | **0.942** |
-| Top **private** LB (yuanzhe zhou, #1) | **0.9334** |
+| Our best | **0.933** (v75) |
+| **#1 public** (Yannan Chen) | **0.962** |
+| #2 public ("BirdCLEF+ 2026 Team") | 0.960 |
+| #20 public | 0.954 |
+| **Publicly-reproducible ceiling** (mtoshidesu reproduced "0.947 LB Public Pipeline") | **~0.947** |
+| Imaad Mahmood "Perch v2 + ProtoSSM" (canonical public starter) | **0.925** |
+| Needless090 "Iter-Pseudo Perch+SED" | **0.934** |
+| **Our gap to top public** | **−0.029** |
+| **Our gap to publicly-reachable ceiling** | **−0.014** |
 
-**0.942 is +0.013 above the public ceiling and +0.0086 above the published #1 LB.** Hitting it means producing a solution stronger than every known submission in the competition. This is *winning territory*. No amount of post-processing tuning, hyperparameter sweeps, or notebook forking will get there — every such lever has been tried (see `plan.md` LB history rows #31–#36).
+**This is not "at the ceiling".** Our v75 = LB 0.933 trails the publicly-reproducible 0.947 pipeline by 0.014, and the actual public LB top by 0.029. The previous "recipe-family ceiling at LB 0.933" framing was an artifact of citing prior-year numbers — the real BC2026 public ceiling is materially higher.
 
-The only path with a realistic chance of +0.013 is **adding a model branch that is (a) comparably strong to ProtoSSM and (b) makes uncorrelated errors**. Output diversity from independent feature pipelines is the historical winner of these competitions.
+The shape of the gap is informative. Our production kernel (`birdclef2026-protossm-postproc.ipynb`) is already a fork of the Perch+ProtoSSM+MLP+SED-rank-fuse public family. Our novel additions (A1→A2 self-training, broader-pool OOF gate) added ~+0.005-0.008 over the 0.925 public starter. The publicly-reproducible 0.947 pipeline (Imaad 0.946 + BirdNET 3rd branch) adds +0.021 *over the same starter* via techniques we haven't tested.
 
-Hard constraints we keep hitting in `plan.md` history:
-- "Weak + strong" ensembles regress (#28C 0.901, #29 0.910). The new branch **must score ≥0.92 standalone** to help.
-- Locally pre-trained Perch students collapse on Kaggle (#32 0.922, #34A 0.912). **Local Perch embeddings ≠ Kaggle Perch embeddings.** Anything that consumes Perch features must be trained on Kaggle.
-- Perch logits as pseudo-labels are too noisy (#34E −0.008).
-- Single-architecture post-proc is fully exhausted (#35A–#35H).
+Hard constraints (still valid):
+- Local Perch embeddings ≠ Kaggle Perch embeddings — Perch-consumers must train on Kaggle.
+- LB SE noise floor: ±0.005. Single-lever OOF gain < +0.05 may not transfer above noise. **But this gate was calibrated assuming we were near the LB ceiling; with 0.014–0.029 of headroom, the right gate may be smaller, since the OOF→LB transfer ratio at the LB asymptote is not the same as the transfer ratio mid-pack.**
 
-These constraints rule out almost everything cheap. What remains is one of:
-- **(A)** Train a strong **non-Perch** model branch (raw audio CNN / BirdNET / log-mel SED) that doesn't share Perch's failure modes.
-- **(B)** Train a heavier **second Perch-consumer** *on Kaggle* (Xformer / Perceiver / cross-modal head) and ensemble with ProtoSSM. Risk: high feature correlation → less diversity than (A).
-- **(C)** Use ProtoSSM-as-teacher to pseudo-label `train_audio` (~46K focal clips), retrain a stronger student.
+Realistic intermediate goals:
+- 0.933 → 0.940 by adopting the public 0.946 pipeline's missing components (iterative pseudo with ensemble teacher, residual SSM second-pass, per-class OOF thresholds, BirdNET as low-weight 3rd branch)
+- 0.940 → 0.95+ requires either (a) more independent model branches or (b) a structural insight not in public notebooks
 
-Realistic intermediate goals (not 0.942 in one shot):
-- 0.927 → **0.930** via residual SSM unlock + correction_weight fix (already pushed in v16, expected this week)
-- 0.930 → **0.933** via track A or B (≥1 month of work)
-- 0.933 → **0.937+** via stacking + recalibration (decision pending track A/B results)
-- 0.937 → **0.942** speculative — would require winning the competition
-
-**This plan does not promise 0.942.** It lays out the only credible attempts and the gates that decide whether each track is alive.
+**This plan no longer claims a ceiling at 0.933.** §35 closeout was based on the stale §1 numbers; see §36 for the reopen.
 
 ---
 
-## 2. Tracks
+## §29 AST track closeout + rank-mean fusion finding + v76 push (2026-05-16 ~14:30 EDT)
 
-Each track is independent. They can run in parallel since they don't share Kaggle daily-submission slots until the final ensemble step.
+### TL;DR
 
-### Track A — Independent SED branch on raw audio (highest expected lift)
+- AST fold-0 training completed at 0.7991 broader-pool — slightly below A1 (0.8094), in the "0.70-0.80 in the game but weaker" band.
+- Cross-arch correlation probe: AST↔A2 mean Pearson = **0.3339** (diversity pass; well below 0.7 threshold).
+- **Sig-mean fusion REGRESSES** at all AST weights (−0.008 to −0.024 vs A2 alone). **Rank-mean fusion GAINS** up to +0.0227 at w=0.40 AST. Architecture-calibration mismatch is real; rank-normalization absorbs it.
+- Best fusion (rank-mean w=0.40): broader-pool 0.8630. Gate is 0.8902 (+0.05 over A2 anchor 0.8402). **Gap −0.0272** — gate-fail.
+- **v76 pushed** (A2 within-fold rank-mean only; +0.0015 OOF gain). LB 0.932 (Δ −0.001 vs v75, within noise). Within-arch null confirmed.
+- **v77 (AST fusion) KILLED** by CPU timing: AST 86M @ seq=1024 = **44s/file** on 4-thread CPU → 517 min extrapolated. Architecturally incompatible.
 
-**Hypothesis**: A CNN trained on raw audio / log-mel features makes errors uncorrelated with Perch-derived models. Even at standalone 0.90 LB it can lift a 0.929 Perch model into 0.935+ via rank-averaging.
+### §29.3 Fusion eval — sig-mean vs rank-mean
 
-**Why this is different from our 0.769 SED dead-end** (Mar 16–29 history):
-- In Mar we hit 0.769 because our SED was the *primary* predictor on noisy soundscapes with too few labeled examples and a frozen pre-Perch backbone.
-- In April Yuriy/Koushik public solutions (~0.929) use SED as a *secondary* branch. We don't need 0.92 SED *alone* — we need a SED that recovers signal Perch misses (insect sonotypes, the 31 missing species, etc.).
-- The 31 species not in Perch's vocabulary are a guaranteed signal source: ProtoSSM/MLP probes can only learn them via embedding shape, but a raw-audio model can directly classify them.
+Computed locally on skynet with cached AST + A2 broader-pool probs:
 
-**Concrete subtracks**:
+| Fusion mode | Broader-pool AUC | Δ vs A2 ens (0.8402) |
+|---|---:|---:|
+| Sig-mean (AST + A2_ens) w=0.05 | 0.8322 | −0.0080 |
+| Sig-mean w=0.50 | 0.8215 | −0.0188 |
+| Sig-mean 6-way equal (1/6 each) | 0.8281 | −0.0122 |
+| Rank-mean w=0.40 (best) | **0.8630** | **+0.0227** |
+| Rank-mean w=0.50 | 0.8603 | +0.0200 |
+| Rank-mean 6-way equal | 0.8568 | +0.0166 |
+| **Gate** (anchor + 0.05) | 0.8902 | — |
 
-| ID | Description | Risk | Expected lift |
-|----|-------------|------|---------------|
-| A1 | **PCEN+ASL+Freq-MixStyle EffNet-B0** trained on `train_audio` only (focal clips), 5-fold, 25 epochs. Inference on Kaggle as ONNX (`onnxruntime` *is* available via the `tf-wheels` style bundled wheel — verify). Standalone target: ≥0.85 LB. | MED | +0.005 to +0.010 if standalone ≥0.88 |
-| A2 | **Train A1 with `train_soundscapes` pseudo-labels** from ProtoSSM ensemble (not Perch logits — those failed in #34E). Use only windows where ProtoSSM confidence > 0.7 *and* prior agrees. | MED | +0.002 to +0.004 |
-| A3 | **Add a second backbone** (EffNetV2-S or NFNet-L0) for intra-SED diversity. Soup the checkpoints. | LOW | +0.001 to +0.003 |
+**Key finding:** sigmoid-mean across architectures with different calibrations regresses; rank-mean absorbs the mismatch. Real and previously-untested fusion principle in this codebase.
 
-**Gates**:
-- A1 standalone LB **must be ≥0.85** before spending submission slots on the ensemble. If <0.85, kill A1 — the 0.769 lesson says weak SED dilutes strong Perch.
-- A1 + ProtoSSM ensemble LB **must beat 0.929** at first attempt or kill the track.
+Within-arch test (A2's own 5 folds, rank-mean vs sig-mean): only **+0.0015** broader-pool gain — confirms rank-mean win is specifically about *cross-architecture* calibration mismatch.
 
-**Estimated work**: A1 ~3–5 days (training + ONNX export + Kaggle integration). A2 ~2 days. A3 ~3 days.
+### §29 Files of note
 
-#### A1 training results (2026-04-07)
-
-5-fold × 25-epoch run complete (7h 45m total). Per-fold best val ROC-AUC on
-the 1478-segment soundscape val (75/234 species present):
-
-| Fold | 0 | 1 | 2 | 3 | 4 | mean |
-|---|---|---|---|---|---|---|
-| val_roc_auc | 0.7414 | 0.7232 | 0.6970 | **0.6636** | 0.7250 | 0.7101 |
-
-Ensemble analysis on the same val set (`four_track/src/eval_a1_ensemble.py`):
-
-| Combiner | val AUC | lift vs per-fold mean |
-|---|---|---|
-| Mean-of-sigmoids, all 5 folds | 0.7017 | **−0.0084** |
-| Rank-avg, all 5 folds | 0.7312 | +0.0211 |
-| Mean-of-sigmoids, drop fold 3 | 0.7294 | +0.0193 |
-| **Rank-avg, drop fold 3 (folds {0,1,2,4})** | **0.7431** | **+0.0330** |
-
-**Key findings:**
-1. **Fold 3 is miscalibrated, not just weak.** Mean-of-sigmoids across all 5
-   folds gives *negative* bagging lift because fold 3's sigmoid scores live on
-   a different scale and pull the average toward the wrong side. Drop-one
-   analysis shows fold 3 is the only fold whose removal improves the
-   ensemble. Every other fold contributes positively.
-2. **Rank-averaging rescues A1.** Under rank-avg the folds DO add information
-   to each other (+0.033 lift). This is the combiner to use for both
-   intra-A1 bagging and cross-model fusion with ProtoSSM.
-3. **Absolute AUC = 0.7431 is below the 0.85 standalone-LB gate,** but the
-   val set only covers 75/234 species so absolute AUC is not directly
-   comparable to LB scale. The binding test remains LB.
-4. **A local cross-model OOF gate is impractical.** ProtoSSM's existing
-   `oof_predictions.npz` covers the 708-file train_audio holdout, not the
-   soundscape val; re-running ProtoSSM on the soundscape val requires
-   re-implementing the entire Perch → embeddings → SSM → residual → TTA
-   pipeline outside the notebook and risks drift vs the LB scorer. The plan
-   already allots 2 LB attempts to A1 — spend the first attempt instead.
-
-#### A1 → LB integration strategy
-
-Track A1 will use **rank-space fusion at the very end of cell 36**, after the
-residual SSM correction but before cell 37's per-class thresholds:
-
-1. **Combiner**: rank-avg of A1 folds {0, 1, 2, 4} (drop fold 3). No
-   score-space mixing — A1's sigmoids are demonstrably miscalibrated relative
-   to ProtoSSM.
-2. **Fusion point**: *after* the residual SSM, not before. The residual SSM
-   was trained on ProtoSSM's score distribution; feeding it rank-transformed
-   or A1-perturbed scores corrupts an already-tuned model.
-3. **Fusion formula**:
-   ```
-   proto_rank = per-class CDF rank of final_test_scores (post-residual)
-   a1_rank    = per-class rank-avg of A1 fold sigmoids
-   fused_rank = (1 - w) * proto_rank + w * a1_rank
-   final_test_scores = per-class CDF inverse mapping of fused_rank
-   ```
-   The round-trip through rank space and back preserves ProtoSSM's score
-   distribution (and therefore cell 37's per-class threshold semantics), so
-   the A1 experiment is isolated from threshold drift.
-4. **Weight**: `A1_WEIGHT = 0.10` for the first LB attempt. 0.05 is too small
-   to distinguish from noise at 0.927 scale; 0.10 is large enough for a
-   ±0.003–0.005 swing either way but small enough that a total A1 collapse
-   cannot drag LB below ~0.922.
-5. **Checkpoint format**: raw `.pt` + torch, *not* ONNX for the first
-   attempt. Torch is already imported in the notebook (cell 22 defines
-   `SelectiveSSM(nn.Module)`, cell 36 uses `torch.no_grad()`). ONNX would
-   save ~10 min of inference time at the cost of ~1h engineering +
-   re-validation; save that for attempt 2 if attempt 1 justifies the effort.
-6. **Inference compute budget**: ~20–30 min added wall time on CPU.
-   EffNet-B0 forward over ~700 hidden test files × 12 windows × 4 folds ≈
-   33,600 forwards at ~25 ms/sample batched = ~14 min of pure compute, +5
-   min mel/PCEN preprocessing, +overhead. Fits the 9h Kaggle CPU budget.
-
-**Gate update** (supersedes the original A1 gates where they conflict):
-- First LB attempt uses w=0.10 rank fusion. If LB ≥ 0.929, A1 is alive and
-  attempt 2 sweeps w ∈ {0.15, 0.20}. If LB drops by >0.003 from 0.927, A1 is
-  dead — move to B1/C2 without using the second slot. If LB moves by
-  ≤0.003 (inconclusive), attempt 2 uses w=0.15 to try to resolve the sign.
-- The original "standalone LB ≥0.85" gate is retired — we never intended to
-  use A1 standalone, and running standalone on LB would waste a slot.
-
-#### A1 LB results
-
-| Attempt | Notebook version | Config | LB | Δ vs prior best | Verdict |
-|---|---|---|---|---|---|
-| 1 (errored) | v17 | rank fusion w=0.10, mel pre-compute | OOM | — | Bug — pre-computing all mels held ~12 GB. Did not consume an A1 attempt. |
-| 1 | v18 | rank fusion w=0.10, streaming mels | 0.929 | +0.002 | A1 alive — passes the ≥0.929 gate. |
-| 2 | v19 | rank fusion w=0.15, streaming mels | 0.930 | +0.001 | Higher weight helps. |
-| **3** | **v20** | **rank fusion w=0.20, streaming mels** | **0.932** | **+0.002** | **New best LB.** |
-| 4 | v21 | rank fusion w=0.25, streaming mels | 0.932 | 0.000 | Flat vs w=0.20 — curve has plateaued. Freeze A1 at w=0.20. |
-
-**Track A1 frozen at w=0.20 (LB 0.932).** Attempt 4 at w=0.25 stayed flat
-vs attempt 3, satisfying the "regresses or stays flat" stop condition.
-A1 is locked in at w=0.20 and the next action is **Track B1** (PerceiverIO
-Perch consumer trained alongside ProtoSSM).
-
-### Track B — Second Perch-consumer on Kaggle (medium lift)
-
-**Hypothesis**: Different architectures on Perch features make different errors. A Perceiver/Xformer head trained on Kaggle (so no embedding domain shift) can ensemble with ProtoSSM for +0.003–0.005.
-
-**Why this might work where #34A (chaneyma Xformer 0.912) failed**: chaneyma was pre-trained locally → embedding mismatch. If we *train on Kaggle* like ProtoSSM does, the features are consistent.
-
-**Concrete subtracks**:
-
-| ID | Description | Risk | Expected lift |
-|----|-------------|------|---------------|
-| B1 | **PerceiverIO over 12 windows** trained on Kaggle alongside ProtoSSM in the same notebook. d_latent=256, n_latents=16, 2 cross-attn + 4 self-attn layers, 30 epochs. Cost: ~10–15 min on top of ProtoSSM's 25–30 min. | MED | +0.002 to +0.004 |
-| B2 | **GRU dual head** like #34C but with 2-fold ProtoSSM (we proved 2-fold ProtoSSM = 0.922 in #34C2; pair with GRU at full strength). Risk: same time bottleneck. | HIGH | +0.001 to +0.003 |
-
-**Gates**:
-- B1 must add ≥+0.002 to ProtoSSM OOF AUC before any LB submission. If <+0.002 OOF, kill — sub-noise.
-- B1 wall time must stay <10 min added (else displaces ResidualSSM via the 35-min gate).
-
-**Estimated work**: B1 ~2–3 days (architecture + training loop). B2 already prototyped but ruled out by 2-fold OOF weakness — only revisit if Track A succeeds and we have headroom.
-
-#### B1 — concrete design (decided 2026-04-08, post-A1-freeze)
-
-A1 is frozen at w=0.20 / LB 0.932; Track B1 is now active. Implementation
-notes that pin down the design so the next session can resume cleanly:
-
-- **Input contract** — same as ProtoSSM: per-file `(emb [N,T=12,1536], logits [N,T,234], site_ids, hours)`. B1 reads Perch logits as a side-channel via a simple front-end projection + concat with `emb`, **not** via a learned per-class fusion alpha (that's ProtoSSM's job). Same inputs, different *use* → architectural diversity at the model body without breaking the data plumbing.
-- **Architecture** — `PerceiverIOHead` in `four_track/src/b1_perceiver.py`:
-  - Input encoder: `Linear(1536+proj(234)+site_emb+hour_emb → 256)` per window.
-  - Latent bank: 16 learned latents, `d_latent=256`.
-  - 2 cross-attn (latents ← windows) + 4 self-attn (latents ↔ latents) blocks, 8 heads each, dropout 0.3.
-  - Output decoder: 12 query tokens (one per window) cross-attend back into the latents → `Linear(256 → 234)` → `(B, T=12, 234)` logits.
-  - **No taxonomy/family aux head.** ProtoSSM has one; dropping it in B1 increases architectural diversity (which is the whole reason B1 exists).
-- **Training** — mirrors `train_proto_ssm_single` so the loss landscape is comparable: focal BCE w/ `pos_weight` (capped), MSE distill against raw Perch logits, file-level Mixup after epoch 5, AdamW + OneCycleLR (`pct_start=0.1`, cosine), grad clip 1.0, SWA from `swa_start_frac × n_epochs`, early stop on `val_loss`. Config lives in new `CFG["b1_perceiver"]` / `CFG["b1_perceiver_train"]` blocks (added to the V18 CFG cell).
-- **OOF protocol** — `run_b1_perceiver_oof` reuses ProtoSSM's exact `file_groups` and `GroupKFold(n_splits=…)`, so per-fold splits match ProtoSSM 1:1 and the proto/B1 OOF correlation check is honest.
-- **Notebook integration** — three new cells, all marker-anchored (no hard-coded indices), inserted by `four_track/src/inject_b1_cell.py` which mirrors `inject_a1_cell.py`:
-  - **Cell 24b** — `# Cell 24b — Track B1 PerceiverIO training (def + OOF)` — function defs, inserted after cell 24 (ProtoSSM training defs).
-  - **Cell 31b** — `# Cell 31b — Track B1 PerceiverIO instantiate + OOF + retrain on full` — runs OOF, logs `LOGS["oof_auc_b1"]` and the proto/B1 OOF correlation, then retrains on all soundscapes. Inserted after cell 31.
-  - **Cell 36b** — `# Cell 36b — Track B1 inference + rank fusion` — runs `b1_model` on `(emb_test_files, logits_test_files, …)`, rank-fuses into `final_test_scores` via the same per-class CDF round-trip pattern as cell 37 (preserves ProtoSSM's marginals so cell 38's per-class thresholds keep their semantics). Inserted **before** cell 37 (the A1 cell), so the order is `ProtoSSM → B1 fusion → A1 fusion → postproc`.
-- **Gates** (must all hold before any LB submission):
-  - `oof_auc_proto+b1 ≥ oof_auc_proto + 0.002` after sweeping `B1_WEIGHT ∈ {0.10, 0.15, 0.20, 0.25}` on OOF.
-  - `corrcoef(oof_proto_flat.flatten(), oof_b1_flat.flatten()) < 0.97` (else B1 is seeing the same signal — kill).
-  - Notebook wall time stays under the 35-min ResidualSSM gate (B1 budget ≤10 min added).
-- **Kill criterion** — if either OOF gate fails, freeze B1, do **not** burn an LB slot, and move to **Track C1** (Perch v2 embedding extraction for `train_audio` pseudo-labels).
-
-#### B1 OOF protocol: structurally broken on this dataset (2026-04-08)
-
-First train-mode dry-run (notebook v22) revealed the OOF lift gate is
-**uninformative** and cannot be used as a go/no-go for B1 (or any branch):
-
-- Cell 7 filters to files with all 12 windows labeled → only **59 files**
-  (not the ~720 we'd assumed). 5 unique site groups → wildly imbalanced
-  GroupKFold splits (39/5/5/5/5).
-- ProtoSSM OOF AUC = **0.6468**, vs its known LB of **0.932**. The OOF
-  number is disconnected from LB by ~0.28 — i.e. the protocol cannot rank
-  branches at all on a 234-class problem with val folds of size 5.
-- B1 standalone OOF AUC = 0.3878 (worse than chance, expected at this fold
-  size). Diversity gate **passed** (corr=0.7115, well below 0.97).
-- The lift gate naturally drives `B1_WEIGHT_FROZEN → 0.00` because any
-  random perturbation looks bad on these tiny folds. The same gate would
-  reject ProtoSSM itself.
-
-**Decision**: bypass the OOF lift gate for B1 in submit mode and burn one
-LB slot at a small `B1_WEIGHT = 0.10` (mirrors how A1's sweep started).
-The diversity gate is still meaningful and B1 passes it. Set in
-`b1_perceiver.py` as `CFG.setdefault("b1_frozen_weight_submit", 0.10)`.
-
-**Carryover for Track C**: C2's "OOF AUC must improve vs C0" gate is
-likewise unreliable on this dataset and needs reformulating before C2
-runs. Reformulation candidates: (a) larger bootstrap on per-class AUCs,
-(b) accept any non-regressing OOF + small LB probe, (c) drop OOF entirely
-for C and budget LB slots instead.
-
-#### B1 LB results
-
-| Attempt | Notebook ver | B1_WEIGHT | LB    | Note                                       |
-|---------|--------------|-----------|-------|--------------------------------------------|
-| 1       | v23          | 0.10      | 0.933 | +0.001 vs A1-only 0.932                    |
-| 2       | v24          | 0.15      | 0.927 | −0.006 regression → freeze at w=0.10       |
-
-**Frozen weight: `B1_WEIGHT = 0.10` / LB 0.933.** Per the A1 stop rule
-(freeze on first regression or plateau), B1 is locked in. The curve peaks
-sharply at w=0.10; the diversity gate was honest but the lift surface is
-narrow. `b1_frozen_weight_submit` reverted to 0.10 in
-`four_track/src/b1_perceiver.py`.
-
-**Next action**: Track **C1 is complete (2026-04-09)** — 35,549 / 35,549
-train_audio clips extracted to
-`four_track/data/processed/perch_train_audio_c2/<species>/<stem>.npz`
-via `four_track/src/extract_train_audio_c2.py`, which is a faithful port
-of the postproc notebook's ONNX Perch + `MAPPED_POS`/`MAPPED_BC_INDICES`
-direct-indexing + genus-proxy logic (cells 2, 3, 5). Per-clip format is
-`{emb: (T, 1536), scores: (T, 234)}` — exactly what ProtoSSM consumes.
-253,101 total 5s windows, mean 7.12 windows/clip, 1.8 GB on disk, 206 /
-234 competition classes have at least one training clip (28 classes have
-no `train_audio` entries at all — mostly unmapped sonotypes). All clips
-capped at the first 600 s (10 min) to bound per-worker RSS — the handful
-of multi-hour field recordings would otherwise blow up memory.
-
-**Next action is Track C2** — ProtoSSM-as-teacher pseudo-labeling: run
-the current ProtoSSM (retrained on all 720 soundscapes) on the C1 cache,
-filter to `(max_conf > 0.6) ∧ (primary_label in top-3)`, then retrain
-ProtoSSM on the union of trusted soundscapes + filtered focal clips.
-**C2 gate reformulation**: the plan's original "OOF AUC must improve
-vs C0" gate is structurally broken (see "B1 OOF protocol" note above —
-only 59 fully-labeled files, 5/5/5/5/39 GroupKFold). Replacement gate
-candidates: (a) hold out 5–10 soundscape *files* as a fixed eval set
-and require strict improvement on that, (b) skip OOF entirely and burn
-one LB slot at small mix weights like B1 did, (c) filter aggressively
-enough that a retrain on just the focal clips still beats ProtoSSM
-standalone on the 59-file OOF. Default: **(b)** — matches how B1 landed,
-and the OOF on 59 files is uninformative anyway. Target to beat: **0.946**.
-
-#### C2 implementation: local-port path (2026-04-09) — ❌ KILLED 2026-04-09 afternoon
-
-> ❌ **STRUCTURAL KILL — DO NOT REVIVE THIS PATH AS-IS.**
-> The local-port C2 was built end-to-end (teacher, pseudo-labels, student, sweep) but is structurally incompatible with the constraint at line 26 of this plan ("Anything that consumes Perch features must be trained on Kaggle"). The three justifications below are real benefits but do not override the embedding-mismatch failure mode that killed #32 and #34A. See the "CURRENT STATE (2026-04-09 afternoon)" section below for the full kill rationale, the local sweep ledger, and the next concrete sequencing item. If you ever consider redoing C2, the only viable path is **(B-redo)**: pre-extract focal-clip Perch features in a one-shot Kaggle kernel, then retrain the student in-notebook on Kaggle-consistent embeddings.
-
-We are pursuing the **local-port path** for C2, not the alt-path of
-burning a Kaggle kernel slot to save the teacher checkpoint. Rationale:
-
-1. **Kernel wall-time ceiling** — retraining ProtoSSM on soundscapes +
-   focal clips inside the notebook eats minutes that already contend
-   with the 90-min submit budget. Training locally removes that
-   contention entirely.
-2. **Multi-seed ensembling** — local training lets us run N seeds of
-   ProtoSSM and soup the checkpoints, something the kernel cannot do
-   without burning N submit slots.
-3. **Knob sweeping without LB cost** — filter threshold, mix weight of
-   focal vs soundscape, epoch count, SWA fraction, and distill weight
-   can all be swept locally; only the final checkpoint hits LB.
-
-**Plan:**
-
-1. **Port ProtoSSMv2 → `four_track/src/protossm_model.py`** — verbatim
-   lift of notebook cell 22 (`SelectiveSSM`, `TemporalCrossAttention`,
-   `ProtoSSMv2`, `init_prototypes_from_data`, `init_family_head`). Pure
-   module, no notebook globals. Extracted staging file:
-   `/tmp/nb_cells/c22_proto_model.py`.
-2. **Port training loop → `four_track/src/protossm_train.py`** — lift
-   of cell 24 (`train_proto_ssm_single`, `run_proto_ssm_oof`,
-   `build_taxonomy_groups`, `build_site_mapping`, `reshape_to_files`,
-   `get_file_metadata`, `mixup_files`, `focal_bce_with_logits`,
-   `optimize_ensemble_weight`). Staging file:
-   `/tmp/nb_cells/c24_proto_train_loop.py`.
-3. **C2 dataset loader** — new `four_track/src/c2_dataset.py` that
-   consumes `four_track/data/processed/perch_train_audio_c2/<species>/<stem>.npz`
-   (C1 output), tiles/random-slices per-clip windows to T=12 to match
-   ProtoSSM's fixed temporal dim, and mixes focal clips with
-   soundscape files at a configurable ratio.
-4. **C2 teacher scoring** — `four_track/src/c2_pseudo_label.py` loads
-   the current best ProtoSSM checkpoint, scores every C1 clip, writes
-   per-clip soft pseudo-labels (NOT hard one-hot — avoids the #34E
-   self-training trap) plus per-clip max-confidence. Filter to
-   `(max_conf > 0.6) ∧ (primary_label in top-3)`.
-5. **C2 training driver** — `four_track/src/train_c2.py` with CLI
-   (`--seed`, `--focal-weight`, `--filter-threshold`,
-   `--out`). Trains ProtoSSM on soundscapes + filtered focal clips,
-   writes checkpoint to `four_track/models/protossm_c2/seed<N>.pt`.
-6. **Kaggle integration** — final checkpoints shipped as a Kaggle
-   dataset (`four_track/kaggle_datasets/protossm-c2-ckpts/`), loaded
-   in the notebook via a new cell that replaces the local retrain
-   with `torch.load(...)`. No training in-notebook at all for C2.
-
-**Gates**: still (b) from above — skip OOF, burn one LB slot at the
-default focal-weight / filter-threshold combo.
-
-#### ⚠️ CURRENT STATE (2026-04-09 afternoon) — C2 KILLED on structural Perch-embedding-mismatch constraint
-
-**TL;DR**: The local-port C2 pipeline ran cleanly end-to-end, but the entire approach was structurally incompatible with a hard constraint already documented in `../plan.md` lines 1824–1838: **locally-trained Perch consumers collapse on Kaggle**, because local Perch v2 features ≠ Kaggle Perch v2 features. C2 trained on `extract_train_audio_c2.py` + `extract_soundscapes_c2.py` outputs (both local) is a member of exactly the category proven DOA by #32 (LB 0.922) and #34A (LB 0.912). The local val_auc collapse from focal clips (recorded below) is real but moot — even if val_auc had been 0.95, LB would still collapse on the embedding mismatch. **No C2 checkpoint will be packaged or submitted.**
-
-**The contradiction the local-port path created (see "C2 implementation: local-port path" section above, lines 278–327)**: that section justifies the local-port path on three grounds — kernel wall-time pressure, multi-seed ensembling, and free knob sweeping. All three benefits are real. None of them address the embedding-mismatch constraint at line 26 of this same plan ("Locally pre-trained Perch students collapse on Kaggle … Anything that consumes Perch features must be trained on Kaggle"). Whoever approved the local-port path on 2026-04-09 (the timestamp on the section header) did not reconcile against line 26. The 4-stage pipeline ran successfully but was building a checkpoint that the plan's own constraints had pre-classified as DOA.
-
-**Lesson for future sessions**: when deciding to do "local training of an X-consumer", grep `../plan.md` and the top of `new_plan.md` for any constraint of the form "X must be trained on Kaggle" *before* writing the implementation. The C2 mistake cost ~1 day of local compute and pipeline-design work; reading line 26 of this file would have caught it in 30 seconds.
-
-**Next concrete action**: see "Next concrete sequencing item" at the bottom of this section.
-
----
-
-**4-stage local pipeline ran cleanly** overnight (preserved here as evidence of *what was built*, even though none of it ships):
-
-| Stage                              | Output                                                           | Result                                                    |
-|------------------------------------|------------------------------------------------------------------|-----------------------------------------------------------|
-| Extract soundscape Perch v2        | `data/processed/perch_train_soundscapes_c2/train_soundscapes/`   | 10,658 clips → 127,896 windows (55.8 min)                 |
-| Train ProtoSSM teacher (80 ep)     | `models/protossm_teacher/teacher.pt`                             | best @ ep 37: val_loss=0.8094 val_auc=0.9115 (SWA over 5) |
-| Pseudo-label C1 cache              | `data/processed/c2_pseudo_labels/pseudo_manifest.csv` + per-clip | total=35549, max_conf>0.6=35549, in_top3=33597, both=33597|
-| Train C2 student (seed 0, fm=5)    | `models/protossm_c2/seed0.pt`                                    | best @ ep 48: val_loss=0.7943 val_auc=0.8127 (SWA over 16)|
-
-**Followup C2 sweep** (fm=focal-mult, T=label temperature, hard=use ground-truth one-hot instead of teacher soft):
-
-| Run               | focal-mult | label-T | label source           | best val_loss | best val_auc | checkpoint                                |
-|-------------------|------------|---------|------------------------|---------------|--------------|-------------------------------------------|
-| Teacher           | —          | —       | (real labels)          | 0.8094        | **0.9115**   | `models/protossm_teacher/teacher.pt`      |
-| **fm=0 control**  | **0.0**    | —       | (real labels only)     | **0.8192**    | **0.9070**   | `models/protossm_c2/seed0_fm0.pt`         |
-| fm=2 T=1          | 2.0        | 1.0     | teacher soft           | 0.8033        | 0.8059       | (overwritten)                             |
-| fm=2 T=4          | 2.0        | 4.0     | teacher soft, T=4      | 0.8645        | 0.8217       | `models/protossm_c2/seed0_fm2_T4.pt`      |
-| **fm=2 hard**     | **2.0**    | —       | **ground-truth one-hot** | **0.8684** | **0.8276**   | **`models/protossm_c2/seed0_fm2_hard.pt`**|
-| fm=5 T=1 (orig)   | 5.0        | 1.0     | teacher soft           | 0.7943        | 0.8127       | `models/protossm_c2/seed0.pt`             |
-
-**Local OOF verdict** (val=10 soundscape files): every variant that injects focal clips drops val_auc by ~8 points vs the no-focal control, **regardless of focal weight, soft-vs-hard labels, or temperature softening**. Hard ground-truth one-hot labels (the cleanest possible signal — the focal clip's known species) drop just as much as teacher soft. The fm=0 control reproduces teacher val_auc within rounding (0.9070 vs 0.9115), demonstrating the val=10 metric is not pure noise — it responds correctly to model quality when the test variable is removed.
-
-**Local OOF evidence (sideshow — moot under the structural kill, recorded for completeness)**: every variant that injects focal clips drops val_auc ~8 points vs the no-focal control on the val=10 split, regardless of focal weight, soft-vs-hard labels, or temperature softening. The fm=0 control reproduces teacher val_auc, so the metric is internally consistent. This *was* the basis for an earlier "decision M: burn one LB slot per the plan's pre-committed protocol (b) and let the LB arbitrate" recommendation, before the embedding-mismatch constraint was rediscovered. Once we re-grepped `../plan.md` for #32/#34A and confirmed the constraint applies, the OOF evidence stopped mattering: there's no point packaging a checkpoint the plan's own documented constraints classify as DOA.
-
-**Why the structural kill supersedes the OOF debate**: the worst case (M-route) was "burn one slot, learn from LB". But the plan-level evidence (`../plan.md` lines 1824–1838) shows the LB outcome is **pre-determined**: locally-trained Perch consumers regress on Kaggle by ~0.005–0.020 LB. The slot is not a free experiment; it's a guaranteed regression, and it would also use a daily slot on a day where the actual A1/B1 ensemble at LB 0.933 is the current best. Decision M is structurally invalid; there is no salvageable variant of "ship the local C2 checkpoint" that escapes the constraint.
-
-**What was built but won't ship**:
-- `models/protossm_teacher/teacher.pt` — locally trained ProtoSSM-like teacher. Cannot be loaded into the Kaggle notebook for the same embedding-mismatch reason. (Possible local-only use as a regression-test reference, not for LB.)
-- `models/protossm_c2/seed0.pt` and `seed0_fm0.pt`, `seed0_fm2_T4.pt`, `seed0_fm2_hard.pt` — locally trained student variants. Same reason. None ship.
-- `data/processed/c2_pseudo_labels/` — locally generated pseudo-labels using the local teacher on local Perch features. Internally consistent, externally meaningless to a Kaggle-trained model.
-- `data/processed/perch_train_soundscapes_c2/` — local Perch v2 cache over `train_soundscapes` (10,658 clips). **Useful only as a local development reference**; cannot be used to train any Perch-consuming model that will run on Kaggle.
-
-**What is preserved as potentially-useful infrastructure**:
-- `data/processed/perch_train_audio_c2/` (35,549 focal clip Perch v2 caches, 1.8 GB) — same caveat: local-only, not Kaggle-compatible. Keep on disk as development reference. **If a future track (e.g. A2) requires a Kaggle-extracted focal-clip Perch cache, that work will need to be redone in a one-shot Kaggle kernel — the local cache will not help directly, only as a sanity-check reference.**
-- `four_track/src/extract_train_audio_c2.py`, `extract_soundscapes_c2.py`, `c2_pseudo_label.py`, `c2_dataset.py`, `train_c2.py`, `protossm_model.py`, `protossm_train.py`, `train_protossm_teacher.py` — all reusable as local reference implementations. The model code (protossm_model/protossm_train) is a faithful port of notebook cells 22/24 and can be useful for offline experimentation that doesn't touch LB.
-
-**Files that should NOT be deleted yet** (pending C2 retrospective + possible future Kaggle-port reuse):
-- All of the above outputs and src files. The cost to keep them is small (~3.5 GB of caches); the cost to recreate them is ~12 hours of local compute. Defer cleanup until at least one other track has progressed and we've had time to write a C2 retrospective.
-
----
-
-#### Next concrete sequencing item (post-C2-kill, 2026-04-09)
-
-With A1 frozen at LB 0.932, B1 frozen at LB 0.933, C1 done, C2 dead, the live tracks per §3 sequencing are:
-
-| Track | Status | Blocker |
-|-------|--------|---------|
-| A2 (self-train A1 with ProtoSSM pseudo-labels) | candidate | needs ProtoSSM pseudo-labels for `train_soundscapes`. Generating these locally hits the same embedding mismatch — must be a one-shot Kaggle kernel that runs ProtoSSM in-budget and dumps soundscape pseudo-labels as a Kaggle dataset. ~1 day infra work. |
-| A3 (second SED backbone — EffNetV2-S or NFNet-L0) | candidate | none — fully Perch-independent, raw audio only. ~2 day local train + ONNX integration mirroring A1's pattern. |
-| D1 (per-class isotonic calibration) | candidate | none — pure post-processing on the existing A1+B1+ProtoSSM stack. Fastest, smallest, lowest-risk. ~half day local. Plan estimates +0.001 to +0.002 LB. |
-| D2 (LightGBM stacking meta-learner) | gated on D1 | wait for D1 result to know if calibration alone closes the gap. |
-
-**Recommended next item: D1 (per-class isotonic calibration)**, because:
-1. Pure local post-processing on outputs we already have — no new training, no Kaggle submission until we have a calibrated stack to test.
-2. Fastest path to a measurable LB read on a non-blocked track.
-3. Validates whether the +0.001 to +0.002 plan estimate holds before committing to the longer A2/A3 work.
-4. If D1 pays off, D2/D3 are natural follow-ons in the same workspace.
-5. If D1 yields nothing, that's still useful information — it means the calibration headroom is gone and we should push directly to A3 (new backbone) for the next +0.005.
-
-The candidate for the actual next session: **read `four_track/src/eval_a1_ensemble.py` (the rank-fusion eval already in the repo) and the OOF dump locations for A1/B1/ProtoSSM, then write `four_track/src/d1_isotonic.py` that fits per-class isotonic regression on each branch's OOF and re-evaluates the rank-fused ensemble.** No Kaggle slot consumed until we have a positive local result.
-
-**Important re-grep before starting D1**: confirm there's no analogous "must be calibrated on Kaggle" constraint we've forgotten. The C2 mistake came from not re-grepping; the lesson should not be wasted.
-
----
-
-#### D1-a result (2026-04-09) — **FAIL, pivot to A3**
-
-Scoped D1 down to **A1 only** (per-class isotonic on each fold's sigmoids, then rank-fuse across folds {0,1,2,4}). Protocol hardened vs #25B:
-1. **File-level held-out split** of the 66 `train_soundscapes` files into disjoint FIT and EVAL halves (segment-level splits were leaking — the 22-segments/file structure put same-file segments on both sides and inflated Δ by ~10×).
-2. **Min-positives gate** per class (N_MIN ∈ {5, 10, 20, 50}).
-3. **Multi-seed** (5 seeds), report median + sign stability.
-
-Results (`src/d1_isotonic.py`, honest file-mode):
-
-| N_MIN | auc_base | auc_cal | Δ_median | sign stable | verdict |
-|---|---|---|---|---|---|
-| 5 | 0.7434 | 0.7475 | +0.0041 | ❌ (one seed −0.0003) | fail |
-| 10 | 0.7434 | 0.7462 | +0.0027 | ❌ (one seed −0.0053) | fail |
-| 20 | 0.7434 | 0.7399 | −0.0035 | ❌ | fail |
-| 50 | 0.7434 | 0.7419 | −0.0010 | ❌ | fail |
-
-Leaky segment-mode reference (for comparison, NOT a valid result): Δ ranged from +0.0034 (N_MIN=50) up to **+0.0476 (N_MIN=5)**, all sign-stable. That's the #25B fingerprint: isotonic was memorizing per-file primary-label tie structure.
-
-**Decision**: D1-a fails the gate (`median Δ ≥ +0.001 AND sign stable`). Per-class isotonic on A1 alone is exhausted. Extending D1 to also calibrate B1 and ProtoSSM before rank fusion would face the same tie-collapse pathology, on an even thinner per-class positive budget — expected ROI is zero or negative. **D1 is deprioritized.**
-
-**Next sequencing item: A3 (second SED backbone — EffNetV2-S or NFNet-L0)**, the only remaining candidate not blocked by an infra prereq (A2 needs a Kaggle kernel to dump soundscape pseudo-labels first) and not exhausted (D1 just was). ~2 days local train + ONNX integration mirroring A1. Plan estimate +0.005 LB.
-
----
-
-#### A3-v1 result (2026-04-10) — **KILL, pivot to A3-v2**
-
-Launched A3-v1 with `tf_efficientnetv2_s.in21k_ft_in1k` via `scripts/train_a3_5fold.sh`, reusing the A1 recipe **unchanged** except for `--backbone` and `--save-dir`:
-- hybrid BCE+ASL loss, `--mixstyle-p 0.5`
-- LR/WD/T_0 from `config.py` (LR=A1 default, T_0=5 cosine warm restarts)
-- Batch 32, 2 workers, no pin_memory/persistent_workers (GB10 unified-memory recipe)
-- 25 epochs, fold 0 first
-
-Fold 0 trajectory (killed at epoch 19/25 to save ~23h of the remaining folds):
-
-| Epoch | train_loss | val_roc_auc | note |
-|-------|-----------|-------------|------|
-| 1 | 0.0367 | 0.6143 | cold start |
-| 2 | 0.0251 | 0.6740 | ★ |
-| 5 | 0.0169 | 0.6855 | ★ (first T_0 restart) |
-| 7 | 0.0188 | 0.7172 | ★ |
-| 9 | 0.0152 | 0.7260 | ★ |
-| **10** | **0.0141** | **0.7362** | **★ PEAK (second T_0 restart)** |
-| 11–15 | 0.012–0.017 | 0.71–0.73 | plateau; restart at 15 peaks at 0.7256, *below* ep-10 |
-| 16–19 | 0.012–0.015 | 0.70–0.71 | downtrend, train_loss still falling → overfitting |
-
-**Verdict**: A3-v1 peaked at **val_roc_auc = 0.7362**, which is **0.034 below the A1 gate (≥0.77 on this same 1478-segment soundscape val set)**. Gap is too large to close in the 6 remaining epochs of fold 0, and each successive T_0 cosine restart was peaking *lower* than the previous one, not higher. Train loss vs val divergence confirms overfit.
-
-Root cause (hypothesis): the A1 recipe (LR, WD, mixstyle_p=0.5) is tuned for a 5.3M-param EffNet-B0. EffNetV2-S is ~4× larger (21.5M params) and typically wants **lower LR and higher regularization**; the current config lets V2-S memorize `train_audio` faster than it generalizes to `train_soundscapes`.
-
-Per-epoch time: **12m 10s** on GB10 (kaggle env, batch 32). Full 5-fold run would have been ~25h.
-
-**Pivot to A3-v2**: same V2-S backbone, recipe retune. Knobs to try (in order of expected impact):
-1. **Lower base LR** — halve it (V2-S canonical recipe uses ~half B0's LR at this batch size).
-2. **Longer T_0** (e.g. 10 instead of 5) — each full cosine cycle gets more time to settle; the observed "later restarts peak lower" pattern suggests current cycles are too short for a larger model.
-3. **Pure ASL loss** (drop hybrid BCE term) — ASL's hard-negative down-weighting matters more at larger model capacity.
-4. **Lower mixstyle_p** (0.25 instead of 0.5) — V2-S's BatchNorm statistics are more sensitive; 0.5 may be over-regularizing the wrong layer.
-5. **Higher weight decay** (2× current) — if lower LR alone isn't enough.
-
-**A3-v2 gate (unchanged)**: fold-0 val_roc_auc ≥ 0.77 before committing to 5-fold. If fold-0 v2 still caps below 0.77 after a 25-epoch run, **abandon EffNetV2-S entirely** and switch to **ECA-NFNet-L0** (the BirdCLEF 2025 2nd-place pairing, held in reserve per `scripts/train_a3_5fold.sh` comments).
-
-**Artifacts retained**:
-- `log/train_a3_5fold_20260410_151538.log` — full fold-0 epoch-by-epoch trajectory
-- `models/a3/a1_tf_efficientnetv2_s.in21k_ft_in1k_fold0_seed42_hybrid.pt` — the ep-10 best checkpoint (0.7362), kept as a reference point for comparing against A3-v2
-- `models/a3/a1_tf_efficientnetv2_s.in21k_ft_in1k_fold0_seed42_hybrid_last.pt` — resume checkpoint at ep-19 (not useful for v2, delete at cleanup)
-
-**Infra upgrade landed during this session**: `src/train_a1.py` now saves a per-epoch `_last.pt` full-state checkpoint (model + optimizer + scheduler + epoch + best_auc) and supports `--resume`, `--start-epoch`, and `--end-epoch` flags. This means A3-v2 (and any future multi-day local run) can survive a crash without losing all progress.
-
----
-
-#### A3-v2 result (2026-04-10) — **KILL at ep 10/25, pivot to NFNet-L0 (A3-v3)**
-
-Launched A3-v2 with `tf_efficientnetv2_s.in21k_ft_in1k` and the retuned recipe from the v1 kill entry above: **pure ASL loss, LR 2.5e-4 (halved), T_0 10 (doubled), mixstyle-p 0.25**. Also landed `--lr`, `--weight-decay`, and `--t0` CLI overrides on `train_a1.py` so recipe retuning doesn't require touching `config.py`.
-
-Fold 0 trajectory (killed at epoch 10/25 when the kill gate `ep-10 < 0.70` hit):
-
-| Epoch | A3-v1 val | A3-v2 val | v2 train_loss | note |
-|---|---|---|---|---|
-| 1 | 0.6143 | 0.6065 | 0.0087 | ★ |
-| 2 | 0.6740 | 0.6262 | 0.0061 | ★ |
-| 3 | 0.6506 | 0.6451 | 0.0053 | ★ |
-| 4 | 0.6695 | 0.6360 | 0.0048 | |
-| 5 | 0.6855 | 0.6607 | 0.0043 | ★ |
-| 6 | 0.6737 | 0.6622 | 0.0040 | ★ |
-| 7 | 0.7172 | 0.6825 | 0.0038 | ★ |
-| 8 | 0.7061 | 0.6851 | 0.0035 | ★ |
-| 9 | 0.7260 | 0.6849 | 0.0034 | |
-| **10** | **0.7362** | **0.6870** | **0.0033** | **★ PEAK — kill gate hit** |
-
-**Verdict**: A3-v2 peaked at **val_roc_auc = 0.6870 at ep 10**, which is:
-- **0.049 below A3-v1's ep-10 peak** (0.7362) — the retune made things *worse*, not better.
-- **0.083 below the A1 gate** (≥0.77). Gap is structural, not close.
-
-**Key diagnostics from the v2 trajectory:**
-1. **The cosine terminal boost didn't happen.** Ep 7→10 gains were +0.003, −0.0002, +0.0021 — a plateau at the bottom of the first cosine cycle, not the steep descent we needed. LR hit `LR_MIN` with the model just sitting there.
-2. **Train-val divergence starting at ep 7.** Train loss fell 0.0038→0.0033 between ep 7 and ep 10 while val only moved from 0.6825→0.6870. Pure ASL did **not** prevent overfit the way I hypothesized — easy-negative gradient removal didn't help this dataset.
-3. **v2 was worse than v1 at every single matching epoch.** The shrinking gap at ep 5–6 (−0.025 → −0.012) that I called "catching up" was just noise around a consistent −0.035 deficit. At ep 10 the gap blew back out to −0.049.
-
-**What v1+v2 jointly prove:**
-- **Pure ASL was a bad call on this dataset.** Contradicts my theoretical argument that zeroing out easy negatives would concentrate gradient signal on hard positives. Empirically, hybrid BCE was the better loss.
-- **The recipe retune was too aggressive.** Four knobs changed at once (LR, T_0, loss, mixstyle_p) makes attribution impossible, but the net direction was wrong.
-- **EffNetV2-S is probably the wrong backbone for this pipeline.** Two failures in opposite recipe directions (v1: B0 recipe as-is; v2: more regularization) suggests it's the architecture, not the hyperparameters. ~25 compute-hours burned; best V2-S number produced anywhere = 0.7362 (still 0.034 below gate). Further V2-S retunes are not worth their compute cost.
-
-**Decision**: Abandon V2-S. Go directly to the plan-documented fallback: **ECA-NFNet-L0** (2025 2nd-place SED pairing, held in reserve per `scripts/train_a3_5fold.sh` comments).
-
-**Artifacts cleaned**: `models/a3_v2/` directory deleted (both `_last.pt` and best checkpoint were at val=0.687, strictly worse than v1's 0.7362 — no reference value).
-
----
-
-#### A3-v3 (2026-04-10, pending) — **ECA-NFNet-L0**
-
-Planned recipe (one-fold-first, retune-before-5-fold gate still applies):
-
-| Setting | Value | Reason |
-|---|---|---|
-| backbone | `eca_nfnet_l0.ra2_in1k` | 2025 2nd-place SED pairing. 21.8M params, similar scale to V2-S but NormFree + WS-Conv architecture. Verified pretrained-available and `features_only out_indices=(4,)` compatible via timm. |
-| loss | `hybrid` (0.5·BCE + 0.5·ASL) | **Revert** to A1's original loss. A3-v2 proved pure ASL hurts. |
-| lr | 2.5e-4 | Same as v2. Proven not-too-high for ~22M params; no reason to go lower on the first attempt. |
-| weight_decay | 1e-4 (default) | NFNet canonical recipe uses very low WD (~2e-5) but that's for SGD+Nesterov. For AdamW, standard 1e-4 is a safer starting point. |
-| t0 | 10 | Longer cycles, same reasoning as v2. |
-| mixstyle_p | **0.0 (disabled)** | NFNet has no `.blocks` or `.stages` attribute on the `features_only` wrapper — the existing hook in `model_a1.py` would fall through to the stem Conv2d, which the code comment explicitly warns is "too aggressive." Rather than hack the hook target, disable MixStyle entirely. NFNet's WS-Conv + scaled activations provide intrinsic regularization. |
-| batch_size | 32 | Unchanged — GB10 unified-memory constraint. |
-| epochs | 25 | Unchanged. |
-| folds | 0 only | Gate check before 5-fold. |
-| save-dir | `models/a3_v3` | Segregate NFNet artifacts from V2-S failures. |
-
-**Known risks specific to NFNet that are NOT being addressed this run:**
-- NFNet canonical training uses **AGC** (Adaptive Gradient Clipping, coefficient ~0.01). `train_a1.py` uses `clip_grad_norm_(5.0)`, which is less aggressive. Fine-tuning tolerates this, but peak accuracy may be lower than the NFNet paper suggests. If v3 clears the gate, AGC is a v4 knob.
-- NFNet's original recipe uses **SGD+Nesterov with stochastic depth**; we're using AdamW. This is normal for fine-tuning but is another deviation from canonical.
-
-**A3-v3 gate (unchanged from v1/v2)**: fold-0 val_roc_auc ≥ 0.77 before committing to 5-fold.
-
-**A3-v3 kill criterion**: ep-10 val < 0.70, OR obvious train-val divergence with train_loss falling faster than val improves. If v3 also fails, **abandon Track A3 entirely** — three failed attempts across two backbones is sufficient evidence that the A1 pipeline doesn't accept a second SED backbone with this amount of recipe investment, and further spending on A3 is strictly dominated by working on A2 (ProtoSSM-self-train, once the Kaggle-kernel-dump infra is built) or D2 (LightGBM stacker on the existing A1+B1+ProtoSSM stack).
-
----
-
-#### A3-v3 result (2026-04-10) — **KILL at ep 10/25, Track A3 ABANDONED**
-
-Launched A3-v3 with `eca_nfnet_l0.ra2_in1k`, hybrid loss (reverted from v2's pure-ASL mistake), LR 2.5e-4, T_0 10, mixstyle_p=0.0 (MixStyle hook disabled — NFNet has no `backbone.blocks[1]` on the `features_only` wrapper, and the hook's Conv2d fallback would target the stem which is "too aggressive").
-
-Fold 0 trajectory through the first cosine cycle:
-
-| Epoch | A3-v1 val | A3-v3 val | v3 train_loss | note |
-|---|---|---|---|---|
-| 1 | 0.6143 | 0.5958 | 0.0348 | ★ |
-| 2 | 0.6740 | 0.6704 | 0.0238 | ★ |
-| 3 | 0.6506 | 0.6707 | 0.0207 | ★ |
-| 4 | 0.6695 | 0.7326 | 0.0190 | ★ |
-| 5 | 0.6855 | 0.7202 | 0.0175 | |
-| 6 | 0.6737 | 0.6740 | 0.0162 | mid-cycle dip |
-| 7 | 0.7172 | **0.7458** | 0.0153 | **★ ALL-TIME A3 PEAK** |
-| 8 | 0.7061 | 0.7427 | 0.0143 | |
-| 9 | 0.7260 | 0.7402 | 0.0136 | |
-| 10 | 0.7362 | 0.7428 | 0.0133 | first cycle bottom |
-
-**Verdict**: A3-v3 peaked at **val_roc_auc = 0.7458 at ep 7** and then spent ep 8/9/10 in a 0.7402–0.7428 plateau. The cosine-cycle bottom at ep 10 (0.7428) is **0.003 below the ep-7 mid-cycle spike** — meaning the terminal LR decay did **not** find a better basin, so ep 7's 0.7458 was almost certainly a one-step lucky sample from a mid-cycle fluctuation, not sustained. The "real" v3 plateau is 0.743–0.746.
-
-**Gate comparison:**
-- **v3 best (0.7458)** vs **A1 gate (≥0.77)** → gap = **−0.024**
-- **v3 cycle-bottom (0.7428)** vs gate → gap = **−0.027**
-- **v3 ep-10 (0.7428)** vs **v1 ep-10 (0.7362)** → +0.0066 (a real but tiny architectural advantage over V2-S; not a path to closing the gate)
-
-**Why this is a kill, not a "wait for second cycle":**
-1. **v3's plateau is 15% of the full training range the model has covered.** The model's entire val span from ep 1 to ep 10 is ~0.16 (0.59 to 0.75). Closing the remaining 0.024 to the gate in the second cycle would require a sustained improvement of comparable magnitude to ~15% of everything the model has achieved so far — on top of already-converging train loss, in a second cycle, with the same recipe. There's no mechanism to expect that.
-2. **The plan's escalation rule was explicit**: "If A3-v3 also fails, abandon Track A3 entirely." v3 is failing (ep 10 < gate − 0.02, plateau shape, no second-cycle-productive hypothesis).
-3. **Sunk cost hygiene.** Across v1 + v2 + v3 we've burned ~**32 hours** of GB10 compute on Track A3. Every additional hour is strictly dominated by working on A2 (ProtoSSM-self-train, blocked on Kaggle-kernel infra) or D2 (LightGBM stacker, unblocked and pure local post-processing).
-
-## 🔴 Track A3 decision: ABANDONED 2026-04-10
-
-Across three attempts (v1 EffNetV2-S B0 recipe, v2 EffNetV2-S retuned, v3 ECA-NFNet-L0 hybrid), the best fold-0 val_roc_auc achieved was **0.7458** — still 0.024 below the A1 gate of 0.77. Two different backbones, three different recipes, same plateau.
-
-**Joint lessons from v1 + v2 + v3** (all three variants tried):
-
-| Variant | Backbone | Loss | LR | T_0 | mixstyle | Best fold-0 val | Notes |
-|---|---|---|---|---|---|---|---|
-| v1 | EffNetV2-S | hybrid | 5e-4 | 5 | 0.5 | 0.7362 @ep10 | Overfit starting ep 11; each cosine restart peaked lower |
-| v2 | EffNetV2-S | pure ASL | 2.5e-4 | 10 | 0.25 | 0.6870 @ep10 | Worse than v1 at every matching epoch — pure ASL was wrong |
-| v3 | ECA-NFNet-L0 | hybrid | 2.5e-4 | 10 | 0.0 | 0.7458 @ep7 | Best A3 attempt; still 0.024 below gate; plateau confirmed at cycle bottom |
-
-1. **The A1 pipeline (PCEN + 5s clips + soundscape val + MixStyle-on-blocks[1]) has a ceiling around val_roc_auc 0.74–0.75 for non-B0 SED backbones we've tried.** This is a *pipeline* ceiling, not a backbone choice — the recipe + data + MixStyle hook target are all tuned to EffNet-B0 specifically.
-2. **Further Track A3 spending is strictly dominated** by A2 (needs Kaggle-kernel infra first) or D2 (unblocked, cheapest, no new training).
-3. **v3's checkpoint was tested (D2-γ, 2026-04-11) and has no salvage value** — blend sweep with A1 was monotonic, not bowl-shaped, and the single-fold A1-vs-NFNet delta (+0.0044) is inside noise. Both `models/a3/` (V2-S v1 ep-10 best) and `models/a3_v3/` (NFNet fold-0 best) are scheduled for deletion. Track A3 is fully closed including salvage.
-4. **v2 checkpoints already deleted** (`models/a3_v2/` fully cleaned 2026-04-10 pre-v3 launch).
-
-**Kill gate on further A3 work**: Do not launch any A3-v4 attempt (AGC, different loss, different backbone, reduced LR, etc.) without *new* evidence. The three-attempt ceiling is sufficient. If a future D2 result reveals that v3's NFNet is contributing meaningfully to ensemble diversity, at that point a full 5-fold v3 run could become re-justified — but only on that specific evidence, not on general "maybe a fourth attempt will work" optimism.
-
----
-
-#### Next concrete sequencing item (post-A3-abandonment, 2026-04-10)
-
-With A1 frozen at LB 0.932, B1 frozen at LB 0.933, C1 done, C2 dead, D1-a failed, Track A3 abandoned, the live tracks per §3 sequencing are:
-
-| Track | Status | Blocker |
-|---|---|---|
-| **D2-β** (Kaggle-side OOF dump → local LightGBM stacker) | **candidate — RECOMMENDED NEXT** | needs a one-shot Kaggle kernel run that dumps B1 + ProtoSSM validation sigmoids on a common 5-fold split as a Kaggle dataset artifact. After that the stacker itself is pure local work. ~½ day Kaggle infra + ~½ day local. |
-| D2-α (full Kaggle-side stacker, LightGBM trained in-notebook) | fallback | heavier Kaggle-side lift; burns submission slots for iteration. Only if β proves infeasible. |
-| A2 (ProtoSSM-self-train with soundscape pseudo-labels) | candidate | needs a one-shot Kaggle kernel that runs ProtoSSM in-budget and dumps soundscape pseudo-labels as a Kaggle dataset (same Perch-embedding-mismatch constraint that killed C2). ~1 day infra work. |
-| D3 (per-taxon ensemble weights) | gated on D2 | wait for D2 result — D3 is a refinement of D2's stacker, doesn't make sense to build before the base stacker exists. |
-
-**⚠️ D2 is NOT purely local — correction logged 2026-04-11.** The original plan claimed D2 was "pure local post-processing on outputs we already have." That was wrong. Filesystem audit (2026-04-11) found:
-- A1 5-fold OOFs: `four_track/data/a1_soundscape_preds.npz` — 1478 soundscape val rows.
-- ProtoSSM OOFs: `models/protossm_pretrained/oof_predictions.npz` — **708 rows, different split**.
-- 0911 teacher OOFs: `data/external/birdclef-0911/teacher_oof_predictions.npz` — **739 rows, different split**.
-- B1 (PerceiverIO) OOFs: **do not exist on disk**. B1 is Kaggle-trained end-to-end on Perch embeddings and we never dumped val sigmoids locally.
-
-No shared row substrate exists for a stacker. D2 therefore requires either (α) training the stacker inside the Kaggle notebook, or (β) a one-shot Kaggle kernel run that dumps `{A1_val, B1_val, ProtoSSM_val, y_true}` on a common 5-fold split as a dataset artifact for local development. **β is preferred** because it keeps the stacker iteration loop local and cheap; α is the fallback if β proves too complex.
-
-##### D2-γ result (2026-04-11) — **NULL, A3 fully closed including salvage**
-
-Before committing to D2-β, ran a degenerate local-only "D2-γ" to answer the narrow A3 salvage question: *does the retained v3 NFNet fold-0 checkpoint add anything to A1 on the 1478 soundscape val set?*
-
-Script: `four_track/src/d2_gamma.py`. Loads A1 5-fold probs from the existing dump, runs NFNet v3 fold-0 inference on the same val set, grid-searches blend weight `w·A1_ens + (1-w)·NFNet`.
-
-| metric | value |
+| File | Purpose |
 |---|---|
-| A1 fold 0 (best single fold on this set) | 0.7414 |
-| A1 fold 1 | 0.7232 |
-| A1 fold 2 | 0.6970 |
-| A1 fold 3 | 0.6636 |
-| A1 fold 4 | 0.7250 |
-| **A1 5-fold soft-vote ensemble** | **0.7017** ← *worse than 4/5 individual folds* |
-| NFNet v3 fold-0 | 0.7458 |
-| Best blend (w=0.05) | 0.7462 (+0.0004 over NFNet alone) |
+| `four_track/src/eval_a4_broader_oof.py` | AST single-fold broader-pool eval + correlation probe |
+| `four_track/data/a4_ast_fold0_broader_oof.npz` | AST fold-0 saved probs (1478, 234) for future fusion analyses |
+| `four_track/models/a4/a4_ast_fold0_seed42_asl.pt` | Fine-tuned AST ckpt (345 MB) — keep for research; no production use |
+| `four_track/jupyter/.../birdclef2026-protossm-postproc.ipynb.bak_pre_v76_a2rankmean` | v75 baseline backup |
+
+**Production baseline for next iterations:** v75 LB 0.933 (sig-mean). Future probes benchmark against 0.933, not v76's 0.932.
+
+---
+
+## §30 A3-recursive (A2-as-teacher self-training) launched (2026-05-16 ~16:45 EDT)
+
+### Rationale
+
+v75 LB 0.933 came from A2 (A1-as-teacher, broader-pool 0.8402). For a third round (A3), use A2's stronger ensemble (0.8402) as the teacher. Hypothesis: cleaner pseudo-labels → marginally stronger A3 student. Diminishing-returns risk known.
+
+### Pipeline status (live state)
+
+⚠️ **Three course corrections this session** (each yielded a memory):
+1. Picked simpler `a2_pseudo_label_a1.py` (leaky for recursive) instead of canonical `a2_emit_oof_pseudo.py` — discarded 37-min DT run, wrote `a3_emit_oof_pseudo_a2.py`. Memory: `feedback_read_call_sites_not_docstrings`.
+2. Calibration showed A2's probs are diffuse vs A1's (median 176/234 active classes vs 4 at standard threshold). Gate-failed P@0.5 (0.633 < 0.70). Rescued with top-K=5 filter (`a3_filter_pseudo_topk.py`) — non-canonical recipe deviation; preserves ranking signal, discards calibration drift.
+3. Dispatched all 5 folds to DT instead of 4+1 DT+skynet split. Killed mid-fold-1, re-dispatched correctly. Memory: `feedback_dispatch_5fold_split_4_plus_1`.
+
+### Live A3 training (4+1 split as of 20:43 EDT)
+
+| Fold | Where | Status | val_roc_auc |
+|---|---|---|---|
+| 0 | DT (pre-kill) | ✓ done | **0.7791** (peak at epoch 8) |
+| 1 | DT (pre-kill) | ✓ epoch-22 ckpt | **0.7848** (peak at epoch 21) |
+| 2 | DT (PID 634513) | running | — |
+| 3 | DT (PID 634513) | queued | — |
+| 4 | skynet (PID 684741) | running | — |
+
+ETA: DT finishes folds 2,3 ~23:15 EDT; skynet fold 4 ~00:30 EDT 2026-05-17.
+
+**A2 comparison so far:** A3 fold 0 = 0.7791 vs A2 fold 0 = 0.8094 (−0.030); A3 fold 1 = 0.7848 vs A2 fold 1 = 0.8067 (−0.022). Per-fold mean projecting ~0.78 → ensemble ~0.80. A2 ensemble was 0.8402. **Projected A3 gap to A2 ensemble: ~−0.04**.
+
+### Decision gate
+
+| A3 ensemble broader-pool | Action |
+|---|---|
+| ≥ 0.8902 (anchor +0.05) | Push v77 to LB |
+| (0.8402, 0.8902) | Information-value only; ask user before slot burn |
+| ≤ 0.8402 | **Kill recursive path; document as exhausted; don't try A4/A5** |
+
+Based on the trajectory, expected outcome is the third row.
+
+### §30 Files of note
+
+| File | Purpose |
+|---|---|
+| `src/a3_emit_oof_pseudo_a2.py` | OOF pseudo-label emission with A2 teacher |
+| `src/a3_calibrate_pseudo.py` | Wrapper: a2_calibrate_pseudo with A3 paths |
+| `src/a3_filter_pseudo.py` | Wrapper: a2_filter_pseudo @ KEEP_THRESH=0.6 |
+| `src/a3_filter_pseudo_topk.py` | Non-canonical top-K=5 rescue filter |
+| `src/a3_train.py` | Wrapper: a2_train with A3 paths (save dir models/a3/) |
+| `data/processed/a3_train_ss_oof_probs.npz` | 108 MB OOF pseudo probs (12 windows/file × 10592 files) |
+| `data/processed/a3_pseudo_soft_topk.npz` | 3.7 MB top-K-rescued soft labels (K=5) |
+| `models/a3/` | A3 ckpts (filename keeps `a2_` prefix from a2_train.py) |
+
+---
+
+## §31 A3 KILLED + cross-arch probe (2026-05-17 ~00:20 EDT)
+
+### A3 final result (kill confirmed)
+
+| Component | A3 | A2 anchor |
+|---|---:|---:|
+| Per-fold mean broader-pool | 0.7745 | 0.8227 |
+| **Ensemble (sig-mean) broader-pool** | **0.7935** | **0.8402** |
+| Gap | **−0.0467** | — |
+
+Per-fold: 0.7789 / 0.7847 / 0.7765 / 0.7450 / 0.7874 (folds 0-4). Eval script verdict: REGRESSION — pseudo-labels actively hurt. Recursive self-training exhausted at this teacher-strength tier. **Don't try A4** (A3-as-teacher would compound the damage).
+
+### CPU smoke for cross-arch candidates (calibrated against B0)
+
+| Backbone | Params | Smoke sec/file (skynet 4-thread, eager) | Implied Kaggle min (700 files, ÷2 for JIT+Xeon) |
+|---|---:|---:|---:|
+| B0 (production reference) | 4.3M | 4.55 | ~27 (verified vs production logs) |
+| **ConvNeXt-Pico** | 8.7M | 3.81 (**0.84× B0**) | **~23** — fits |
+| **MobileViT-S** | 5.1M | 8.88 (**1.95× B0**) | **~53** — tight but feasible if A2 folds reduced |
+
+Skynet 4-thread eager-mode timing is ~2× Kaggle CPU + JIT. Relative ratios are LB-decision-relevant.
+
+### Cross-arch probe launched (parallel)
+
+Two-fold-0 probes running in parallel. Both share recipe: focal + A2 pseudo-labels (canonical `a2_pseudo_soft.npz`, A1 teacher), pseudo_ratio=0.4, ASL loss, 25 epochs.
+
+| Run | Backbone | Where | Status | ETA |
+|---|---|---|---|---|
+| MobileViT-S fold 0 | mobilevit_s.cvnets_in1k | DT (PID 672653) | RUNNING | ~5h (fold 0 in flight at 00:14 EDT) |
+| ConvNeXt-Pico fold 0 | convnext_pico.d1_in1k | skynet (PID 731021) | RUNNING | ~6h (skynet:DT 3× × 2× params) |
+
+**Patch landed:** `four_track/src/model_a1.py` — `out_indices=(4,)` → `(-1,)` (and `(3,4)` → `(-2,-1)`). Backward-compatible for EffNet (5 stages: -1 == 4). Unlocks ConvNeXt (4 stages) and any non-EfficientNet backbone with a different stage count.
+
+### Decision gate (per-fold, single fold)
+
+| Single-fold broader-pool | Action |
+|---|---|
+| ≥ 0.80 | Strong cross-arch candidate; scale to 5-fold + rank-fuse with A2 in production |
+| 0.75-0.80 | Comparable to A1 (0.7775 anchor); proceed to rank-mean(A2_ens, single_fold) LB probe |
+| < 0.75 | Backbone doesn't transfer; kill that candidate |
+
+If at least one candidate gates above 0.75, **the strongest signal for breaking +0.005 LB** is rank-mean fusion with A2 ensemble (per §29 finding: AST × A2 gave +0.023 broader-pool at rank-mean w=0.40, AST didn't ship due to CPU).
+
+### §31 Files
+
+| File | Purpose |
+|---|---|
+| `src/eval_a3_broader_oof.py` | Wrapper of eval_a2_broader_oof for A3 ckpts |
+| `data/a3_5fold_broader_oof.npz` | A3 ensemble OOF (3.7 MB) — kept for fusion analyses, never shipping |
+| `src/smoke_cpu_arch.py` | Reusable CPU latency smoke for new backbone candidates |
+| `src/a5_train_xarch.py` | Wrapper: a2_train with models/a5_xarch/ save dir + A2 pseudos |
+| `models/a5_xarch/` | Cross-arch ckpts (will be populated as runs complete) |
+
+## §32 Cross-arch direction CLOSEOUT (2026-05-17 ~16:30 EDT)
+
+### TL;DR
+
+Three cross-arch single-fold candidates evaluated, all gate-failed at the +0.05 broader-pool rule. **Recipe-family ceiling confirmed at ~+0.023 fusion gain.** Direction added to Killed Directions table. Pivoting to §33 (Cerrado-geo-filtered XC pretrain on B0) per user choice; alternative was (ii) accept LB 0.933.
+
+### §32.1 The three attempts
+
+| Arch | Recipe | Standalone broader-pool | Mean corr vs A2 | Best rank-mean fusion w/ A2 | Δ vs A2 anchor (0.8402) |
+|---|---|---:|---:|---:|---:|
+| AST (§29) | Aves-pretrained, focal+pseudo | 0.7991 | 0.3339 | 0.8630 @ w=0.40 | +0.0227 |
+| ConvNeXt-Pico (§31/§32) | ImageNet, ASL+pseudo 0.4, mixstyle=0.5 | 0.7829 | 0.3802 | 0.8463 @ w=0.25 | +0.0061 |
+| MobileViT-S #1 (§31) | ImageNet, ASL+pseudo 0.4, mixstyle=0.5 | 0.7906 (overfit ep 2) | — | — | — |
+| MobileViT-S #2 (§31) | mixstyle=0 retry | 0.7980 | 0.3762 | 0.8480 @ w=0.30 | +0.0077 |
+| MobileViT-S #3 (§32) | **transformer recipe** (lr=1e-4, wd=5e-2, warmup=2, pseudo=0.2) | **0.7350** (ep 17, undertrained) | — (not fused) | — | (would be worse than #2) |
+
+The MobileViT #3 transformer recipe HURT — landed 0.063 below #2's lr=5e-4 recipe at the same epoch budget. Even doubling epochs would project to ~0.78 (still below #2). The "transformer needs a transformer recipe" hypothesis is **falsified** for this dataset scale + pseudo-label setup.
+
+### §32.2 Why the ceiling is structural
+
+Fusion gain tracks (a) standalone strength and (b) inverse of cross-arch correlation. With same data, same labels, same mel front-end, same val pipeline:
+
+- **Correlation floor ≈ 0.33** (AST's lowest, 86M-param transformer family) — same-data CNN/transformer variants can't get meaningfully below this.
+- **Standalone ceiling ≈ 0.81** for any candidate that's CPU-feasible (per §29 AST CPU kill).
+- Product of the two → fusion gain capped at ~+0.023. **Cannot clear +0.05 gate.**
+
+To break the ceiling would require either (a) genuinely independent feature representation (different input modality), or (b) a structurally different training signal (different corpus/pretrain — §33's path).
+
+### §32.3 Files of note
+
+| File | Purpose |
+|---|---|
+| `src/eval_a5_broader_oof.py` | Single-ckpt broader-pool eval + per-class Pearson vs A2 fold-0 (mirror of `eval_a4_broader_oof.py` for `model_a1`-based ckpts) |
+| `src/fuse_a5_rankmean.py` | Rank-mean weight sweep for cross-arch fold-0 + A2 ensemble |
+| `data/a5_convnext_pico_fold0_broader_oof.npz` | ConvNeXt-Pico fold-0 saved probs (1.5 MB) for any future re-analysis |
+| `data/a5_mobilevit_s_fold0_broader_oof.npz` | MobileViT-S #2 fold-0 saved probs |
+| `models/a5_xarch/*.pt` | Preserved cross-arch ckpts (no production use) |
+| `src/a2_train.py` | NEW: `--lr / --weight-decay / --warmup-epochs / --save-suffix` CLI args (backward-compatible) added §32 for the MobileViT-S transformer-recipe attempt; reusable for future recipe variants |
+
+### §32.4 What §32 closes vs leaves open
+
+- **Closes:** cross-arch fusion under "same data + same recipe family + mel front-end" is exhausted. Don't add CNN/transformer #4. Don't relax the +0.05 broader-pool gate.
+- **Leaves open:** §33 (Cerrado-geo XC pretrain) is a different mechanism (acoustic-environment match, not architectural diversity). If that gate-fails too, the lever class is empirically exhausted and (ii) accept LB 0.933 is the only honest call.
+
+---
+
+## §33 Cerrado-geo-filtered XC pretrain on B0 — **KILLED** 2026-05-18 (Phase D gate-fail; sixth convergent kill in the bird-audio-pretrain class)
+
+### §33.1 Context + commitment
+
+After §32 closed cross-arch, the user committed to (iii-a) Cerrado-geo-filtered XC pretrain. Distinct from the killed (iii-b) "plain L2-redux Aves-corpus-at-scale" (see Killed Directions table; §18.7 −0.010 below baseline). Mechanism: **acoustic-environment match** (mic profiles, biome ambience, vocal density), not species-coverage match.
+
+### §33.2 Pre-flight RESULT — corpus size gate passes for Cerrado, fails for strict Pantanal
+
+XC v3 metadata scan (`data/external/xenocanto_bulk/`, 6,718 species dirs, 718,721 total recordings):
+
+| Filter | Recordings | Species | vs §21.3 ≥10K abort gate |
+|---|---:|---:|---|
+| Strict Pantanal bbox (lat -22..-16, lon -58..-54) | **1,634** | 200 | FAIL (16% of gate) |
+| **Cerrado biome bbox (lat -24..-2, lon -60..-41)** | **36,126** | **1,103** | **PASS (3.6× gate)** ← chosen |
+| All Brazil (cnt=Brazil) | 63,566 | 1,372 | Pass 6.4× (rejected — drifts toward killed L2-redux mechanism) |
+
+Cerrado is the middle ground that keeps the "acoustic-environment match" mechanism intact while having enough signal density to pretrain.
+
+### §33.2a Phase A RESULT (2026-05-17 ~17:30 EDT) — manifest built, file-existence gate passed, fine-grained gate marginally missed (user overrode)
+
+Manifest at `data/processed/xc_cerrado_pretrain_manifest.csv`:
+
+```
+total records seen :   718,721
+geo bbox pass      :    36,126
+length 5..120s pass:    32,844
+file present on disk:   32,620   ← 224 missing audio files dropped
+final manifest rows:    32,620   (1,097 species, 437 unique recordists)
+
+Per-species coverage:
+       1 rec :    62 species
+    2-4 recs :   120 species
+    5-9 recs :   135 species
+   10-49 recs :   545 species  ← bulk of distribution
+   50-199 recs:   235 species
+    200+ recs:     0 species
+```
+
+The arbitrary 1000-species @ ≥5 recs fine-grained gate I added missed at 915 (8.5% short). User opted to proceed: the §21.3 plan gate (≥10K clips) is met 3.3×, the body of the distribution is healthy (780 species in 5+ recs bucket), and the 1000-species threshold was self-imposed. Honest §33.4 prior adjustment: gate-pass odds drop marginally (10–15% → 8–12% broader-pool gate-pass; LB +0.005 ~2–4%). Still a long shot, but the choice respects the actual plan gate, not the arbitrary tightening.
+
+### §33.3 Recipe outline (mirror killed §18.7 recipe structure, swap corpus)
+
+**Phase A — Build pretrain manifest** (~hours, CPU-only)
+- Filter XC v3 _meta.json → CSV with `(file_path, species_code, gen, sp, lat, lon, length_sec, quality)` for the 36,126 Cerrado records
+- Sanity: per-species count distribution, length distribution, quality distribution
+- Deduplicate by XC ID, drop length <5s and length >120s
+- Output: `data/processed/xc_cerrado_pretrain_manifest.csv`
+
+**Phase B — Pretrain B0 on Cerrado corpus** (~6–10h DT, gated by available NVMe space)
+- Fork `src/pretrain_l2_redux.py` (per `new_plan_history.md` §14.20+) → `src/pretrain_xc_cerrado.py`. Same recipe: focal-BCE γ=2, AdamW, multi-taxon head (1,103 species), 32 kHz mono, mel front-end matching production
+- Save best ckpt to `models/xc_cerrado_pretrain/best.pt`
+- Held-out 5% of pretrain corpus for early-stopping
+- Per §18.7 lesson + §21.4: **smoke-then-scale** — no full pretrain at scale until smoke gate passes
+
+**Phase C — Smoke finetune** (~1.5h DT, the §18.7-style gate)
+- One fold (fold 0), `--init-from models/xc_cerrado_pretrain/best.pt`, `--ft-recipe production`, ASL loss, 25 ep, mixstyle=0.5
+- **Gate (mandatory, no relaxation):** val_v2 fold-0 ≥ 0.7414 (ImageNet baseline anchor)
+- **Gate-fail → kill §33, lock LB 0.933.** This is the same hard gate that §18.7's L2-redux failed by 0.010
+
+**Phase D — If smoke passes, scale to 5-fold finetune** (~5.5h DT sequential, or 4+1 split per `feedback_dispatch_5fold_split_4_plus_1`)
+- 5-fold finetune on BC2026 train_audio + A2 pseudos
+- Broader-pool 1478-window OOF eval
+- **Gate:** broader-pool ≥ 0.8902 (A2 anchor + 0.05) — the established `feedback_min_oof_delta_to_burn_slot` rule, NOT relaxed
+- Gate-pass → push v77 = Cerrado-pretrained B0 + A2 fusion (rank-mean if cross-arch — but same B0 family means within-arch sig-mean is the default per §29)
+
+### §33.4 Honest priors
+
+- **Phase C smoke gate-pass prior: ~20–30%** — higher than §18.7's prior because the mechanism is different (acoustic-environment match vs species-coverage match), but plain XC v3 pretrain failed by 0.010 so we're not far above the floor.
+- **Phase D broader-pool +0.05 gate-pass prior: ~10–15%** conditional on Phase C passing. The OOF→LB transfer at +0.05 magnitude has historically been ~0.08 (per `project_a2_first_gate_pass` 0.063 OOF → 0.005 LB) — clearing +0.05 broader-pool would project to +0.004 LB, *just at* noise floor.
+- **End-to-end LB +0.005 prior: ~3–5%.** This is a real long shot. Pursuing it because (ii) accept-the-ceiling is irreversible and the user wants one more empirical shot before locking.
+
+### §33.5 What would falsify the path
+
+- Smoke fold-0 finetune val_v2 < 0.7414 → mechanism falsified, kill §33
+- Smoke passes but broader-pool 5-fold ensemble < 0.85 → standalone too weak, won't beat anchor even at best fusion weight, kill §33
+- Broader-pool ≥ 0.85 but < 0.8902 → information-value only, do NOT push LB slot per `feedback_min_oof_delta_to_burn_slot`
+
+### §33.6 Time-box per §21.4
+
+- **3 days hard wall** from Phase A start (Phase B is the bulk; Phase A is ~hours; Phase C+D fit in the remainder)
+- If Phase A reveals corpus issues (e.g. lots of stub-length recordings, severe class imbalance) that need rework, deduct rework time from the 3-day box — don't extend
+
+### §33.7 Files (to be created, marker for future sessions)
+
+| File | Purpose |
+|---|---|
+| `src/build_xc_cerrado_manifest.py` | Phase A — filter XC v3 by Cerrado bbox + dedupe/filter |
+| `data/processed/xc_cerrado_pretrain_manifest.csv` | Phase A output |
+| `src/pretrain_xc_cerrado.py` | Phase B — fork of `pretrain_l2_redux.py` |
+| `models/xc_cerrado_pretrain/best.pt` | Phase B output (Cerrado-pretrained B0 backbone) |
+| `models/xc_cerrado_pretrain/config.json` | Phase B run config snapshot |
+
+---
+
+## §34 Chapter 10 ensembling audit — **Tier 1 + Tier 2 closed** (2026-05-17 → 2026-05-20)
+
+**Tier 1 best (operator sweep + Caruana + LogReg + inv-corr):** 0.8630 broader-pool, rediscovered via AST × A2 rank-mean w=0.40 (the already-known §29.3 finding; AST is CPU-infeasible so unshippable). Shippable Tier 1 best (ex-AST): MobileViT × A2 rank-mean = 0.8480. Both gate-fail.
+
+**Tier 2 (multi-seed A2 bagging, seeds 42/43/44 × 5 folds = 15 ckpts):** 15-ckpt sig-mean = 0.8499; 15-ckpt rank-mean = 0.8515; best post-hoc composition = 3-seed-sigmean rank-mean = **0.8538** (Δ +0.0136 vs A2 anchor 0.8402). All hit the 0.85–0.86 band; **none clears the 0.8902 gate**. Per `feedback_min_oof_delta_to_burn_slot`, +0.0136 OOF → projected ~+0.0011 LB at the historical 0.08 transfer ratio (well below ±0.005 LB SE). No v77 push.
+
+Side finding (Tier 2): seeds 43 (0.8501) and 44 (0.8531) both outperform production seed 42 (0.8402) as 5-fold standalone bags. The original A2 happened to land in a weaker basin. Selecting "best seed" on broader-pool would be test-set cherry-picking; not shippable.
+
+**Lever-class verdict (six-attempt convergent kill on within-arch DL ensembling diversity):** Operator-swap ensembling and multi-seed bagging are the two untried levers Ch 10 pp 388 highlighted; both hit the same +0.023 fusion-gain ceiling that §32 established for cross-arch. Structural ceiling at LB 0.933 confirmed.
+
+### §34.1 Context
+
+While Phase D was running, user asked whether we're doing enough ensembling. Read The Kaggle Book Ch 10 (Ensembling with Blending and Stacking Solutions, pp 361–394) end-to-end. Audit produced concrete gaps.
+
+### §34.2 What we're already doing vs what Ch 10 lists
+
+| Technique | Ch 10 recommendation | BC2026 stack |
+|---|---|---|
+| Arithmetic mean (sig-mean) | "Basically a no-brainer" | YES — v75 production |
+| Rank averaging for AUC | "If task is ROC-AUC, simply averaging may not suffice... convert to ranks" | YES — v76 within-arch, §29 cross-arch |
+| Inverse-correlation weighting | "Slight improvements suffice" | **NO** — never tried |
+| Geometric / harmonic / mean-of-powers / logarithmic | "Variants may work better than arithmetic" | **NO** — never tried |
+| Linear blending (LogReg + L1/L2 + positive-only) | "Linear preferred; constraints prevent overfitting" | **NO** — we tried LightGBM stacker (D2-α/β, killed LB 0.925) but never LogReg |
+| Ensemble selection (Caruana hill-climbing) | "Recommended where overfit risk is high" | **NO** — never implemented |
+| Stacking k-fold OOF + meta-learner | "Doesn't need comparable predictive power" | YES (D2-α/β) — killed LB 0.925 |
+| **Multi-seed bagging** | "For neural nets, varying init seed alone creates diverse bag" | **NO** — 1 seed per fold |
+| 10–20 fold OOFs (vs our 5) | "Ideally between 10 and 20" | NO |
+| Bagging within each fold | "Helps avoid overfitting" | NO |
+
+### §34.3 Ch 10 validates the §32 cross-arch ceiling
+
+Page 390 verbatim: *"Even if you can manage to stack models in a deep learning competition, you have a limited choice for stacking different models. Since you are restricted to deep learning solutions, you can only vary small design aspects of the networks and some hyperparameters (or sometimes just the initialization seed) without degrading the performance. In the end, given the same type of models and more similarities than differences in the architectures, the predictions will tend to be too similar and more correlated than they should be, limiting the effectiveness of ensembling."*
+
+This is exactly the §32 +0.023 ceiling. Not a failure of execution; a known structural limit. Document this for future sessions that might want to "try one more cross-arch."
+
+### §34.4 Three-tier plan + recommendation
+
+**Tier 1 (cheap, ~2h scripting + 5 min runtime, no GPU). RECOMMENDED.**
+Single script `src/ensemble_tier1_sweep.py` operates on existing OOF npz files (A2 5-fold, AST f0, ConvNeXt f0, MobileViT f0, Cerrado 5-fold when Phase D + eval done). Runs:
+- Alternative averaging operators (geometric, harmonic, mean-of-powers, logarithmic) on within-arch and cross-arch pairs
+- Inverse-correlation weighted averaging on the full pool
+- Caruana ensemble selection with file-based holdout (split 66 soundscape files for honest test AUC)
+- Logistic regression blender (L1 + positive-only weights) with file-based holdout
+
+**Honest projection:** best of Tier 1 lands ~0.85–0.87 broader-pool. Gate-fail vs 0.8902. Closes the "we never tried" gap.
+
+**Tier 2 (1 GPU-day, gated on Tier 1 result).** Multi-seed A2 bagging — train A2 fold 0–4 with seeds 43 and 44 (production seed is 42), so we get 3 seeds × 5 folds = 15 models. Sig-mean ensemble. Per Ch 10 pp 388, this is the lone untried mechanism with structural >+0.05 potential (different init → different local minima → genuine error decorrelation without cross-arch correlation ceiling). Cost: ~15h DT (or 12h DT + 3h skynet via 4+1 split).
+
+Trigger: only if Tier 1 lands ≥ 0.85 broader-pool. If Tier 1 maxes at the existing A2 anchor (0.84), Tier 2 priors degrade significantly.
+
+**Tier 3 (skip).** Multi-layer stacking, bagging-within-fold, 10–20 fold OOFs. Each requires retraining everything; cost-benefit poor vs Tier 2.
+
+### §34.5 Honest priors
+
+- Tier 1 best gate-pass: ~5%. Operator changes within the same averaging space probably add <+0.01 over current rank-mean. Mostly empirical closure.
+- Tier 2 gate-pass conditional on Tier 1 ≥ 0.85: ~15–20%. Multi-seed bagging is the chapter's lone "this could work" untried lever for DL-only competitions.
+- End-to-end LB +0.005 across both tiers: ~3–5%. In the same ballpark as §33 went in.
+
+### §34.6 Files (to be created)
+
+| File | Purpose |
+|---|---|
+| `src/ensemble_tier1_sweep.py` | Tier 1 sweep — alt operators + correlation weighting + Caruana + LogReg blender, file-based holdout |
+| `data/ensemble_tier1_results.json` | Recorded results for §34 closeout / future reference |
+
+---
+
+
+## §35 Competition closeout — **RETRACTED 2026-05-20 ~14:30 EDT**; based on stale §1 LB numbers. See §36 for the reopen.
+
+> The closeout below was written under the assumption that LB 0.933 was near the competition ceiling. That premise was wrong — actual BC2026 public LB top is 0.962, publicly-reachable code reproduces ~0.947. The Tier 2 multi-seed result (best 0.8538 broader-pool) still gate-fails at the +0.05 rule, so the *Tier 2 outcome itself* stands. But "competition closed" does not. See §36 for the techniques top public notebooks use that we have not tested.
+
+## §35 Competition closeout — LB 0.933 locked (2026-05-20 ~14:00 EDT) — [RETRACTED]
+
+### §35.1 Tier 2 final result
+
+15-ckpt multi-seed A2 bagging (3 seeds × 5 folds), broader-pool 1478-window OOF:
+
+| Composition | broader-pool | Δ vs A2 anchor 0.8402 |
+|---|---:|---:|
+| Seed 42 alone (= A2 anchor) | 0.8402 | — |
+| Seed 43 alone (5-fold) | 0.8501 | +0.0099 |
+| Seed 44 alone (5-fold) | 0.8531 | +0.0129 |
+| Seeds 42+43 (10-ckpt) | 0.8438 | +0.0036 |
+| Seeds 42+44 (10-ckpt) | 0.8505 | +0.0103 |
+| Seeds 43+44 (10-ckpt) | 0.8522 | +0.0120 |
+| 15-ckpt sig-mean | 0.8499 | +0.0097 |
+| 15-ckpt rank-mean | 0.8515 | +0.0113 |
+| **3-seed-sigmean rank-mean (best post-hoc)** | **0.8538** | **+0.0136** |
+| **Gate (anchor + 0.05)** | 0.8902 | — |
+
+Best post-hoc composition is **−0.0364 below gate**. At the historical OOF→LB transfer ratio of 0.08 (v75: +0.063 OOF → +0.005 LB), +0.0136 OOF projects to ~+0.0011 LB — well below the ±0.005 LB SE noise floor.
+
+**Verdict: GATE FAIL → closeout. No v77 push.**
+
+Side finding: seed 42 (the production seed) was the weakest of the three. Seeds 43 / 44 each beat it standalone. This isn't shippable (selecting seed on broader-pool = test-set leakage) but it's worth recording: future training runs in this family should sample multiple seeds and report variance rather than treating any single seed as canonical.
+
+### §35.2 Final submission
+
+**v75 = A2 self-trained (A1-as-teacher) 5-fold sig-mean — LB 0.933.** Locked as final.
+
+### §35.3 Lever search summary (§2 → §34)
+
+The path from LB 0.916 (v16 baseline) to LB 0.933 (v75) used four levers that *worked*:
+
+1. **A1 teacher-pseudo + B0 student** — §15-19 → v50 0.929 anchor
+2. **A2 self-training (A1-as-teacher) with focal + pseudo_ratio=0.4 + mixstyle=0.5** — §22-24 → v75 0.933
+3. **Broader-pool 1478-window OOF as the LB-correlated gate** — §22.4 made decision-making honest
+4. **+0.05 broader-pool gate hard rule** — `feedback_min_oof_delta_to_burn_slot` prevented dozens of slot-burns
+
+Twelve levers in three classes hit a wall:
+
+**A. Bird-audio pretrain transfer** (mechanism: more bird-domain pretraining transfers to BC2026). Six convergent kills:
+- L2 (original Aves pretrain), L2-redux (XC v3 scaled), iNat 2024 Sounds (cross-corpus), Perch (Google embedding), BirdNET (Aves-only encoder), Cerrado-geo XC (biome-filtered). All hit the same gate-fail band (val_v2 0.73–0.74 vs ImageNet 0.74 baseline). The structural cap is that BC2026's broader taxonomy + acoustic environment + window pooling discipline already extracts what these corpora offer.
+
+**B. Cross-architecture diversity in the same recipe family** (mechanism: heterogeneous arch + mel front-end → uncorrelated errors). Three kills (§29, §32):
+- AST: standalone 0.7991, cross-arch fusion gain +0.023 (best ever), but CPU-infeasible (44s/file vs 90-min Kaggle cap).
+- ConvNeXt-Pico: standalone 0.7829, fusion gain +0.006.
+- MobileViT-S: standalone 0.7980 (CNN recipe) / 0.7350 (transformer recipe), fusion gain +0.008.
+- Structural ceiling: fusion gain ≤ +0.023 for any CPU-feasible CNN/transformer × A2 in this recipe family. Cannot clear the +0.05 gate.
+
+**C. Within-architecture ensembling exotica** (Ch 10 unfilled gaps). Three kills (§34):
+- Tier 1 operator-swap (geom/harm/mean-of-powers/inv-corr/Caruana/LogReg) — best was AST × A2 rank-mean rediscovery; shippable best gate-failed by 0.042.
+- Within-arch rank-mean (v76) — +0.001 broader-pool, LB −0.001 (within noise).
+- Multi-seed A2 bagging (this section) — +0.014 broader-pool best, gate-fail by 0.036.
+
+### §35.4 What the ceiling is, mechanistically
+
+LB 0.933 is the asymptote for this competition's structure with a *single-model recipe family*. Ch 10 pp 390 states this directly: in DL-only competitions, varying init seed / arch / small hyperparams produces models too similar to break the fusion-gain ceiling. The published private-LB #1 is 0.9334; our 0.933 sits inside one LB SE of it.
+
+Breaking the ceiling would require:
+- A genuinely independent feature representation (different input modality — e.g. spectrogram + raw waveform + Perch embeddings consumed *Kaggle-side*, since local Perch ≠ Kaggle Perch).
+- Or, an external corpus that actually transfers (six tried, none did).
+- Or, a stacking layer with real domain signal (LightGBM stacker tried in D2-α/β and killed at LB 0.925 — D2-β killed because the meta-features carried no extra signal over the base learners).
+
+None of these is reachable in the remaining time / compute budget without a major recipe change. Closing the book.
+
+### §35.5 Artifacts preserved
+
+| File | What |
+|---|---|
+| `data/a2_a1_5fold_broader_oof.npz` | A2 production OOF (anchor 0.8402) |
+| `data/a2_multiseed_broader_oof.npz` | 15-ckpt multi-seed OOF (§35.1 table source) |
+| `data/a2_multiseed_results.json` | §35.1 JSON dump |
+| `data/a4_ast_fold0_broader_oof.npz` | AST fold-0 (best-ever fusion partner, unshippable) |
+| `data/a5_convnext_pico_fold0_broader_oof.npz` | ConvNeXt-Pico fold-0 |
+| `data/a5_mobilevit_s_fold0_broader_oof.npz` | MobileViT-S fold-0 |
+| `data/xc_cerrado_5fold_broader_oof.npz` | Cerrado-pretrained 5-fold OOF |
+| `data/ensemble_tier1_results.json` | Tier 1 sweep results dump |
+| `models/a1/a1_tf_efficientnet_b0.ns_jft_in1k_fold{0..4}_seed{42,43,44}_asl.pt` | 15 ckpts |
+| `jupyter/protossm-postproc/birdclef2026-protossm-postproc.ipynb` | v75 production kernel |
+
+---
+
+## §36 Reopen — what top public notebooks use that we have NOT tested (2026-05-20 ~14:30 EDT)
+
+### §36.1 How we got here
+
+After the §35 "closeout", a competition-LB sanity check (`kaggle competitions leaderboard birdclef-2026 -s`) showed the actual public top at LB 0.962 (Yannan Chen) and a publicly-reproducible pipeline ("BirdCLEF 2026 0.947 LB: Public Pipeline Reproduced" by mtoshidesu) at LB 0.947. The §1 reality assessment had been citing prior-year LB numbers (Yuriy 0.929 / yuanzhe zhou 0.9334), which created the false impression that LB 0.933 was near the ceiling. **It is not.**
+
+§1 has been rewritten. §35 is retracted (the Tier 2 result itself stands; the "competition closed" conclusion does not). This §36 inventories what top public notebooks demonstrably use that we have not tested, so the next push has a concrete menu.
+
+### §36.2 Inventory of public-notebook techniques
+
+Pulled via `kaggle kernels pull` to `/tmp/topnb/` for direct read; LB scores are the claims in the notebook titles/descriptions.
+
+| Notebook | Claimed LB | Technique gap from our v75 |
+|---|---:|---|
+| Imaad Mahmood — Perch v2 + ProtoSSM | 0.925 | Same family as our kernel; this is the public starter |
+| **Needless090 — Iter-Pseudo Perch+SED v17** | **0.934** | (a) `v5_pseudo + v5_pseudo2`: *two rounds* of pseudo with ensemble-as-teacher (vs our 1 round A1→A2); (b) per-class OOF-optimized decision thresholds; (c) Residual SSM second-pass; (d) sonotype mirroring (label-space expansion) |
+| Maryna Borovska — Two-Pass SSM | — | Pass-1 ensemble + lightweight Pass-2 model trained to predict `Y − sigmoid(first_pass)` residuals |
+| **Mtoshidesu — 0.947 Public Pipeline Reproduced** | **0.947** | "Exact copy of Imaad Mahmood's 0.946 pipeline" + **BirdNET as low-weight third branch** (we killed BirdNET *solo* — never tested as a low-weight 3rd branch) |
+| F.A.Nina EoS.4 | 0.948 (claim) | Meta-blend of multiple public notebooks (0.001 × YoussefLB948 + 0.999 × Karnakbayev Power Optimization) |
+| Itshyao — S124 S114 G124 F1 RankBlend | — | Multi-model rank blend, weights ≈ {0.03, 0.97} across two solution buckets; each bucket has its own SED-fold composition |
+| Imaad Mahmood "0.946 pipeline" (referenced by mtoshidesu) | 0.946 | Cells: Perch backbone → MLP probes → SSM → distilled SED branch → optional BirdNET → final rank blend + PP gates. Cell 08 = "UPGRADED prior tables — joint site-hour bucket" |
+
+### §36.3 Levers we have NOT tested (in priority order by cost × prior gain)
+
+These are *distinct* from anything in the current Killed Directions table — each is either a different framing or a sub-lever the kills do not cover.
+
+**T1 — DROPPED 2026-05-20.** Read the actual `apply_per_class_thresholds` in iter934 — it's a piecewise-linear *monotone-per-column* transform that maps `[t, 1] → [0.5, 1]` and `[0, t] → [0, 0.5]`. Within-column ranking is invariant, so macro ROC-AUC is unchanged. The V17 author may have included this for legacy reasons or confused it with another lever. **It cannot move the metric we care about.**
+
+**T1' — PROBE RAN 2026-05-20, RESULT INTERESTING BUT NOT A SHIPPABLE LEVER.** Pure-numpy probe on cached A2 OOF found +0.0197 broader-pool from `file_level_confidence_scale(top_k=1)` and similar magnitudes for `rank_aware_scaling(power=0.8)` and the combined trio. **But the production kernel ALREADY HAS all three PP techniques active** (CFG line 242-250 + line 361-362 overrides: `file_level_top_k=2, rank_aware_scale=True, rank_aware_power=0.4, delta_shift_alpha=0.20`). The probe was measuring what PP adds to the raw A2 SED branch; the kernel applies the same PP downstream of all-branch fusion, so that +0.019 is already baked into v75's LB 0.933. Filing this as a "verify against production code before claiming a missing lever" lesson. Memory: `feedback_read_call_sites_not_docstrings` applied to my own probes.
+
+### §36.3b CORRECTED untested-lever menu (after kernel inspection)
+
+After confirming what is actually in `birdclef2026-protossm-postproc.ipynb`, the real untested levers are:
+
+**L1 — Bump ResidualSSM correction_weight 0.10 → 0.35** (cheapest, ~1 LB slot, ~75 min Kaggle run). Single-config change. iter934 V17 uses 0.35; ours uses 0.10. The ResidualSSM exists in our kernel but is downweighted 3.5×. Could go either way — they may have tuned for their specific pipeline. Test ranking: at 0.35 the residual second-pass dominates the first-pass correction; ours mostly leaves the first pass alone.
+
+**L2 — KILLED 2026-05-20 by offline rank-blend probe.** Tested BirdNET-MLP rank-blend against three bases (A2 anchor 0.8402, 15-ckpt sigmean 0.8499, 3-seed rankmean 0.8538) at weights ∈ {0.02, 0.05, 0.10, 0.15, 0.20}. **All combinations regressed** — BirdNET's 0.5644 broader-pool is too weak even at low weight, and cross-correlation (0.19-0.24) is good but not enough to compensate. The public 0.947 = 0.946 + BirdNET attribution (+0.001 LB) is at LB SE noise floor and may not be a real lever. We don't have BirdNET-direct-logits-via-scientific-name OOF cached, but priors are low given the same TFLite model + same Aves-only taxonomy gap that killed BirdNET solo in §24. Also: §14.14.15 B1 weight sweep already showed w=0.20 regresses to LB 0.922 (the natural analog to mtoshidesu's SED=0.18). The B1 weight is already locally optimized at w=0.10.
+
+**L3 — Multi-recipe SED bag** (~5 days DT, biggest expected gain). iter934's 5 ckpts are diverse in *training recipe*: `v5_focal` (focal loss), `ce_s123` (CE with seed 123), `ce_s456` (CE with seed 456), `v5_pseudo` (focal + pseudo round-1), `v5_pseudo2` (focal + pseudo round-2). Our 5 ckpts are the same recipe across 5 folds. Recipe diversity should genuinely de-correlate errors in a way fold-split diversity cannot (per §34's seed-bagging finding: same-recipe seeds gain +0.014; cross-recipe likely gains more).
+
+**L4 — Iter-pseudo round 2 (ensemble teacher)** (~3 days DT compute + 1 LB slot). The public 0.934 notebook's `v5_pseudo2` is round-2 pseudo from the full SED+ProtoSSM ensemble (NOT from a single SED). Our killed A3 was round-2 from A2-alone. Different mechanism. This is the strictly-different-from-killed-A3 reformulation of iter-pseudo.
+
+**L5 — TTA full 5 shifts at submit (not capped 3)** (config change, but blocked by 90-min budget). Our kernel caps TTA shifts to 3 in submit mode for runtime. If we could free 15-20 min elsewhere (skip OOF, ship pre-trained ProtoSSM ckpt), we could enable 5 shifts. Modest expected gain (+0.001-0.003).
+
+### §36.3c LEVER PRIORITIES (effective 2026-05-20)
+
+Cheapest-first to highest-cost:
+
+| Order | Lever | Cost | Expected gain | Risk |
+|---|---|---|---|---|
+| 1 | L1: ResidualSSM correction_weight bump | 1 LB slot | unclear | Could regress |
+| 2 | L2: BirdNET 3rd branch | 1 day + 1 LB slot | +0.001-0.005 | Could regress (over-blending) |
+| 3 | L5: TTA full 5 shifts (if budget allows) | config | +0.001-0.003 | Time budget |
+| 4 | L4: Iter-pseudo round 2 (ensemble teacher) | 3 days DT | +0.003-0.008 | High |
+| 5 | L3: Multi-recipe SED bag | 5 days DT | +0.005-0.012 | High |
+
+**T2 — BirdNET as low-weight third branch (cheap, ~1 day).** Public 0.947 = Imaad 0.946 + BirdNET at small weight. Our §24 killed BirdNET *solo* at LB 0.742; we have never tested it as a low-weight blend component. Mechanism: low-weight branches contribute mostly via uncorrelated errors, not absolute strength — a strict subset of the BirdNET kill. Prior gain: +0.001-0.005 LB. Cost: BirdNET inference cell in kernel + weight sweep + one LB probe.
+
+**T3 — Iterative pseudo with ENSEMBLE teacher (medium, ~3 days).** Our killed A3 used A2 *alone* as teacher; the public 0.934 notebook uses the SED+ProtoSSM ensemble as the pseudo teacher (`v5_pseudo + v5_pseudo2`). The kill in `project_recursive_pseudo` was specifically "A2 → A3 with A2-alone teacher". Ensemble-as-teacher is structurally different (richer probability surface, more error-correlation diversity in the labels). Prior gain: +0.003-0.008 LB. Cost: emit ensemble pseudo OOF + retrain SED student (~5 days DT for 5 folds).
+
+**T4 — Residual SSM / second-pass boosting (medium, ~3-5 days).** Train a small model on `Y − sigmoid(first_pass_ensemble)` residuals. Mathematically gradient-boosting-style. We have never tried any boosting head. Prior gain: +0.002-0.005 LB. Cost: model design + train + integrate into kernel.
+
+**T5 — Joint site-hour bucket priors (cheap, ~1 day).** Our kernel uses site / hour priors separately. Public 0.947 uses "UPGRADED" joint bucket. May or may not help — quick to test. Prior gain: +0.001-0.003.
+
+**T6 — Sonotype mirroring (medium, ~3 days).** Public 0.934 mentions this in Cell 51. Need to read source to understand the mechanism (probably: map species labels to higher sonotype groupings, train auxiliary head, use it as a regularizer). Unknown prior.
+
+**T7 — Additional SED diversity at low weight.** Even if our cross-arch §32 closed the "fusion gain > +0.05" question, the public top likely runs 3-5 SED variants in the bag, each at low weight, where the *aggregate* effect beats single-arch. Worth re-testing the AST × A2 (LB 0.025 LB-projected from broader-pool +0.023) given our LB headroom is now ~0.029, not ~0.005. **However:** AST is CPU-infeasible per `feedback_ast_cpu_infeasible` — this lever needs a CPU-feasible substitute.
+
+### §36.4 Gate calibration under the new picture
+
+The +0.05 broader-pool gate was calibrated from four LB data points spanning the regime where we were near our v75 ceiling. With 0.029 of LB headroom to top public, the OOF→LB transfer ratio could be very different — historically transfer ratios are higher when you're mid-pack and lower as you approach the asymptote. The four data points behind `feedback_min_oof_delta_to_burn_slot` were:
+- v4 5-fold +0.027 OOF → −0.001 LB (we were at 0.930)
+- sig_mean +0.010 OOF → −0.001 LB (we were at 0.929)
+- BirdNET +0.077 OOF → −0.187 LB (taxonomy mismatch, structural)
+- v75 +0.063 OOF → +0.005 LB (we were at 0.928, broke to 0.933)
+
+None of these data points were collected at LB <0.92 or LB >0.94. Mid-pack at LB 0.94 may have a 3-5× higher transfer ratio than at LB 0.93. **Don't lower the gate by guess; collect new transfer data.** First LB probe should be the lowest-cost lever (T1: per-class thresholds) — if it moves LB by ≥+0.002, the +0.05 gate is overstated and should be re-calibrated.
+
+### §36.5 What §35's Tier 2 / Cerrado / Tier 1 closeouts STILL imply
+
+- The seed-bagging / cross-arch / operator-swap / XC-pretrain attempts that all gate-failed individually **are still genuine kills under their existing framing**. Don't reopen them on the basis of §36 alone.
+- §32's "structural ceiling at +0.023 cross-arch fusion gain" stays true *for that recipe family*. The reopen is about **levers we never tested**, not about reviving levers that did fail.
+- The "Multi-seed A2 bagging" Killed Directions row (added 2026-05-20) is correct — multi-seed within A2 didn't clear gate. But this doesn't preclude multi-model (multi-arch) ensembles, which §32 closed for B0-family only.
+
+### §36.6 Files (notebooks read from /tmp/topnb/ on 2026-05-20)
+
+| Path | What |
+|---|---|
+| `/tmp/topnb/947/` | mtoshidesu 0.947 public pipeline (largest reference) |
+| `/tmp/topnb/iter934/` | needless090 iter-pseudo Perch+SED v17 |
+| `/tmp/topnb/twopass/` | Maryna Borovska two-pass SSM |
+| `/tmp/topnb/eos4/` | F.A.Nina EoS.4 meta-blend |
+| `/tmp/topnb/rankblend/` | itshyao S124-S114-G124-F1 rank blend |
+
+These are tmp; pull fresh copies if a future session wants to inspect them. Source command:
+```bash
+kaggle kernels pull mtoshidesu/birdclef-2026-0-947-lb-public-pipeline-reproduced -p ./947
+kaggle kernels pull needless090/birdclef-2026-iter-pseudo-perch-sed-lb-0-934-s -p ./iter934
+kaggle kernels pull marynaborovska/birdclef-26-two-pass-ssm-advanced-pp -p ./twopass
+kaggle kernels pull nina2025/birdclef-2026-eos-4 -p ./eos4
+kaggle kernels pull itshyao/birdclef-2026-s124-s114-g124-f1-rankblend -p ./rankblend
+```
+
+---
+
+## 📌 PICK UP HERE — INVALIDATED 2026-05-23 ~23:45 EDT, see §43 (end of file) for current state
+
+## §36-era PICK UP HERE (2026-05-21 ~23:15 EDT — L4-v1 nearly done on DT, L4-v2 staged for auto-dispatch)
+
+> **All prior PICK UP HERE sections are invalidated** (including the earlier 18:12 EDT one).
+> This is the single current handoff.
+
+### TL;DR — one paragraph
+
+Kaggle Perch p0/p1 extraction finished early (~22:00 EDT, not 23:00). Merged 10658-file × 12-window cache built; verified all 66 broader-pool val files are included (no separate val-extraction kernel needed). Rebuilt local Perch cache (59 full-labeled files), trained ProtoSSM 3-seed × 5-fold file-CV (OOF 0.8301), ran ensemble inference on full 10658-file pool, built L4-v2 teacher smoke gate eval. **Gate PASSES**: rank-mean fusion w_L3=0.60 = 0.8832 vs L3-prec subset 0.8709 (Δ +0.0122, > +0.010 dispatch threshold). Built L4-v2 pseudo manifest (rank-mean @τ=0.9667 → 2.44 positives/window matching L3-prec @0.7 baseline). **Caveat:** 60.8% of L4-v2 pseudo positives come from 159 classes ProtoSSM never saw during training — the +0.0122 OOF gain was measured on 71 in-val classes only. Realized student gain may be smaller. L4-v1 fold-0 is at epoch 14/25 on DT, val_v2 plateaued at 0.8035 since epoch 9; ETA ~02:30 EDT 2026-05-22. **Autopilot script in place** to wait for L4-v1 completion, syncback + eval L4-v1 broader-pool, then dispatch L4-v2 fold-0 on DT (~9h, ETA ~12:00 EDT 2026-05-22). Production LB stays v75 0.933.
+
+### §36.A — Autopilot (running in background as of 2026-05-21 23:15 EDT)
+
+Script: `four_track/scripts/l4_autopilot_dt.sh`. Launched via `nohup ... > log/l4_autopilot_YYYYMMDD_HHMMSS.log &`. Steps:
+
+1. Poll DT for L4-v1 completion marker `L4 fold-0 smoke DT dispatch complete` in the runon log (sleeps 5 min between polls).
+2. On completion (or `Traceback` → abort): syncback DT ckpts to skynet.
+3. Run `python -u src/eval_l4_fold0_broader_oof.py --ckpt-suffix _l4` → produces `data/l4_fold0_broader_oof.npz` + console verdict against gate 0.8696.
+4. Dispatch L4-v2 fold-0 on DT: `runon deepthought bash scripts/l4v2_fold0_smoke_dt.sh` (blocks remotely).
+5. After L4-v2 completes (~9h later): syncback + run `eval_l4_fold0_broader_oof.py --ckpt-suffix _l4v2` → produces `data/l4v2_fold0_broader_oof.npz` + verdict.
+6. Exit.
+
+Autopilot abort conditions: any Traceback in DT log between steps. Recoverable manually.
+
+### §36.B — Current artifacts on disk (skynet)
+
+| Artifact | Path | Notes |
+|---|---|---|
+| Merged Kaggle Perch features (full pool) | `four_track/kaggle_datasets/train-soundscapes-perch/full_train_soundscapes_perch.npz` | 826 MB; 127896 windows × 10658 files |
+| Rebuilt Perch cache (59-labeled subset) | `four_track/data/kaggle_perch_cache/full_perch_arrays.npz` | 4.6 MB; train-time cache for ProtoSSM |
+| ProtoSSM 3-seed ckpt (avg) | `four_track/models/protossm_pretrained_v2/protossm_pretrained.pt` | 23 MB |
+| ProtoSSM OOF (file-CV) | `four_track/data/protossm_oof_fileCV.npz` | OOF mean 0.8301 |
+| ProtoSSM probs on full pool | `four_track/data/processed/protossm_pseudo_soundscape.npz` | 106 MB; (127896, 234) sigmoid probs |
+| L4-v2 fused pseudo NPZ | `four_track/data/processed/l4v2_pseudo_soundscape.npz` | 105 MB; rank-mean fused |
+| L4-v2 pseudo manifest CSV | `four_track/data/processed/l4v2_pseudo_manifest.csv` | 10.1 MB; 101672 rows, 2.36 positives/window |
+| Teacher gate report | `four_track/log/eval_l3prec_x_protossm_fileCV_*.log` | full sweep + verdict |
+| Calibration JSON | `four_track/data/processed/l4v2_pseudo_calibration.json` | τ=0.9667, trained/untrained split |
+
+L4-v2 pseudo manifest also staged on DT at `/home/swatson/work/MachineLearning/_runon/BirdCLEF/four_track/data/processed/l4v2_pseudo_manifest.csv` and dispatch script at `scripts/l4v2_fold0_smoke_dt.sh`.
+
+### §36.C — New code added this session (uncommitted)
+
+| File | Purpose |
+|---|---|
+| `src/rebuild_perch_cache.py` | Convert merged extraction to ProtoSSM's expected schema (59-file labeled subset) |
+| `src/train_protossm_local.py` (modified) | Added `--save-oof-path` and `--cv-mode {site,file}` flags |
+| `src/run_protossm_full_pool.py` | Run 3-seed ProtoSSM ensemble on full 10658-file pool, emit (n_windows, 234) probs |
+| `src/eval_l3prec_x_protossm_broader_oof.py` | Teacher smoke gate eval (sig-mean + rank-mean weight sweeps + verdict) |
+| `src/build_l4v2_pseudo_npz.py` | Per-class rank-normalize L3-prec & ProtoSSM probs, fuse rank-mean w_L3=0.60, calibrate τ for 2.44 pos/window |
+| `src/eval_l4_fold0_broader_oof.py` | Single-fold broader-pool eval; works for both `_l4` (L4-v1) and `_l4v2` ckpts |
+| `scripts/l4v2_fold0_smoke_dt.sh` | L4-v2 fold-0 dispatch script (DT) — uses l4v2_pseudo_manifest.csv |
+| `scripts/l4v2_fold0_smoke_skynet.sh` | Same but for skynet (NOT USED — aborted due to 28h ETA) |
+| `scripts/l4_autopilot_dt.sh` | Wait+eval+dispatch autopilot |
+| `jupyter/perch-train-soundscapes-extract/merge_partitions.py` (modified) | PARTITION_COUNT 4→2, dir paths corrected |
+
+### §36.D — Decision tree for next session (user picks this up)
+
+```
+WHEN AUTOPILOT COMPLETES (~12:00 EDT 2026-05-22):
+  Inspect log/l4_autopilot_*.log for both L4-v1 and L4-v2 fold-0 broader-pool AUCs.
+
+  L4-v1 fold-0:
+    < 0.8596 (below L3-prec fold-0 reference) → A3-pattern repeat → ABORT L4-v1 5-fold
+    0.8596 - 0.8696 → marginal; defer 5-fold decision
+    ≥ 0.8696 → DISPATCH full L4-v1 5-fold (4+1 split per CLAUDE.md)
+
+  L4-v2 fold-0:
+    < 0.8596 → ABORT L4-v2; write closeout
+    0.8596 - 0.8696 → marginal; per the noisy-pseudo caveat (§36.A above),
+        likely the realized signal was diluted by the 159 untrained-classes;
+        defer 5-fold decision
+    ≥ 0.8696 → DISPATCH full L4-v2 5-fold (4+1 split)
+
+IF BOTH GATE-PASS:
+  Both 5-fold runs ~26h DT each. Run them sequentially or split DT/skynet
+  per the 4:1 heuristic. Cross-reference: do L4-v1 and L4-v2 5-fold
+  ensembles diverge enough to fuse productively?
+
+IF BOTH GATE-FAIL:
+  L4 lever exhausted. Per §35-style closeout: lock LB 0.933 final.
+  No new L5 in scope (within-arch ceilings established).
+
+IF ONE PASSES AND ONE FAILS:
+  Lean toward the passing one. Re-evaluate plan for whether
+  the failing one's mechanism can be revived.
+```
+
+### §36.E — Risk pointers for tomorrow
+
+- **Cron / runon blocking semantics**: the autopilot assumes `runon deepthought` blocks until the remote script finishes. If it doesn't (returns immediately after dispatch), step 5's eval would run too early on stale ckpts. Sanity-check by looking at the autopilot log timestamps: if step-4 `runon` returns in <5 min, that's the bug. Mitigation: a poll loop after the dispatch.
+- **L4-v2 noisy-pseudo caveat**: 60.8% of pseudo positives are from 159 untrained-by-ProtoSSM classes. If L4-v2 gate-fails despite passing the smoke gate, this is the structural reason. Don't take it as falsification of "Perch features add value as a teacher" — it falsifies "uniform rank-mean fusion across all 234 classes adds value as a teacher." Per-class selective fusion (rank-mean on 71 trained, L3-prec on 163 untrained) is the obvious fallback if we want to try harder.
+- **Gate threshold (+0.010 delta) is tight**: at the historical 0.08 OOF→LB transfer ratio, +0.010 broader-pool projects to +0.0008 LB — well below ±0.005 LB SE. Don't burn a v77 slot without a +0.05 ensemble gain.
+
+### §36 — L4 dispatch and rationale
+
+**L4 hypothesis (plan §553, §678):** iter934's `v5_pseudo2` succeeded *not* via recipe diversity (§35 falsified that for our pipeline), but because round-2 pseudo from a **different teacher** breaks the A2-self-anchor that killed A3.
+
+We are testing TWO L4 variants in parallel because the ideal teacher (SED+ProtoSSM combined, faithful to iter934) requires Kaggle-Perch features which we don't have yet, and the cheaper SED-only teacher (L3-prec alone) is structurally similar to A3 and might fail the same way.
+
+### §36.1 — L4-v1 (cheap, dispatched, training now)
+
+**Recipe:** B0 + CE + seed 123 + mixstyle_p=0 + pseudo manifest from L3-prec 5-fold teacher @ threshold 0.7 (precision-matched to A2's A1@0.5). Identical to L3-prec training except the pseudo source.
+
+**Current status (as of 2026-05-21 18:12 EDT):**
+- **Where:** deepthought (PID 2246147)
+- **Script:** `four_track/scripts/l4_fold0_smoke_dt.sh`
+- **Log:** `deepthought:/home/swatson/work/MachineLearning/_runon/BirdCLEF/log/runon_deepthought_20260521_172151.log`
+- **Started:** 17:21 EDT
+- **Progress:** Epoch 2/25 done @ 18:07 EDT. val_v2 ROC-AUC trajectory: epoch 1=0.7848 ★, epoch 2=0.7954 ★. Both new bests. Training loss dropping cleanly (2.95 → 2.62).
+- **Per-epoch:** ~22m 02s (DT, larger dataset than L3-prec due to 1.7× pseudo rows)
+- **ETA finish:** ~02:40 EDT 2026-05-22
+- **Ckpt destination:** `models/a1/a1_tf_efficientnet_b0.ns_jft_in1k_fold0_seed123_ce_l4.pt` (via `--ckpt-suffix _l4` flag added to `train_a1.py` this session)
+
+**Comparison to L3-prec at same epochs** (same recipe, A2-pseudo): L3-prec fold 0 epoch 1=0.7268, epoch 2=0.7794. L4-v1 is **+0.058 / +0.016 ahead** on val_v2. No A3-style early regression. Caveat: per `feedback_per_fold_val_misleads_ensemble`, val_v2 during training is NOT predictive of broader-pool — the real gate runs after fold-0 finishes.
+
+**L4-v1 gate matrix (derived from A3 kill data — A3 fold 0 broader-pool 0.7789 = −0.030 below A2 fold 0 0.8094, so the A3 mechanism IS detectable at fold-0):**
+
+| L4-v1 fold-0 broader-pool | Verdict | Action |
+|---|---|---|
+| < 0.8596 (below L3-prec teacher fold-0) | A3-pattern repeat | **ABORT L4-v1.** Write closeout. Continue waiting on L4-v2. |
+| 0.8596 – 0.8722 | Round-2 modestly works, ensemble projection (+0.018) won't clear +0.05 slot rule | Continue 5-fold for info value (~26h DT) only if budget allows. Otherwise abort. |
+| ≥ 0.8722 (+0.013 over teacher) | Plausible slot-worthy projection | Commit to full 5-fold dispatch |
+
+Fold-to-ensemble gain calibration: A2 fold-mean 0.8227 → ens 0.8402 (+0.018), L3-prec fold-mean 0.8504 → ens 0.8700 (+0.020). Consistent ~+0.018-0.020 gain.
+
+**Eval script to run after fold-0 finishes:** clone `four_track/src/eval_l3_precursor_broader_oof.py`, change `CKPT_NAME_FMT` to `a1_..._fold{f}_seed123_ce_l4.pt`. Single-fold variant: only run fold 0, no ensemble.
+
+**L4-v1 pseudo artifacts already on disk:**
+- `four_track/data/processed/l3prec_pseudo_soundscape.npz` (113 MB) — raw 5-fold sigmean probs on 127,104 windows
+- `four_track/data/processed/l4_pseudo_manifest_t070.csv` (12.4 MB, 126,131 rows) — A2-precision-matched threshold 0.7 manifest
+- `four_track/data/processed/l4_pseudo_manifest.csv` (14.2 MB, 127,101 rows) — threshold 0.5 variant, NOT used (too many positives/window per §36.1 sanity check)
+
+**Calibration sidebar** (worth remembering for any future SED pseudo work): L3-prec's prob scale is ~0.1 higher than A1's at matched FPR. L3-prec @ 0.7 ≈ A1 @ 0.5 in precision and TPR. Mean positives/window @ 0.5 was 4.29 vs A2's 1.17 — would have been a calibration disaster. Threshold 0.7 brings it to 2.44 — still 2× A2's but matched precision.
+
+### §36.2 — L4-v2 (faithful iter934, Kaggle-Perch bottlenecked)
+
+**Recipe:** Same B0/CE/seed123/no-mixstyle student. Teacher = (L3-prec 5-fold SED) ⊕ (ProtoSSM ensemble), combined under rank-mean per `reference_cross_arch_rank_mean_fusion`. Pseudo manifest threshold to be calibration-matched per the §36.1 sidebar.
+
+**Hard constraint:** ProtoSSM consumes Perch v2 embeddings. Per `four_track/docs/new_plan_history.md` L26-27 and the killed-directions table, **local Perch features ≠ Kaggle Perch features** (proven by C2, #32, #34A LB collapses). We MUST get Perch embeddings from a Kaggle kernel.
+
+**Kaggle extraction kernels — running now:**
+- **p0:** https://www.kaggle.com/code/stevewatson999/birdclef-2026-perch-train-soundscapes-extract-p0
+- **p1:** https://www.kaggle.com/code/stevewatson999/birdclef-2026-perch-train-soundscapes-extract-p1
+- Pushed: ~18:05 EDT 2026-05-21
+- ETA: ~4.8h each → ~23:00 EDT 2026-05-21
+- Output per partition: `full_train_soundscapes_perch_p{0,1}of2.npz` + `full_train_soundscapes_meta_p{0,1}of2.parquet` in `/kaggle/working/`
+- Source: `four_track/jupyter/perch-train-soundscapes-extract/` + `four_track/jupyter/perch-train-soundscapes-extract-p1/`
+- Smoke history: v1 (TF-only path, 25 files in 4.4 min, projected 31h) → v2 (ONNX path fix via rglob, 25 files in 0.9 min, projected 9.5h, 3.4× speedup) → v3-equivalent = the production partitioned push above
+- Build script supports `SMOKE=True/False` + `PARTITION_ID/PARTITION_COUNT` constants in Cell 1; edit and `python build_notebook.py` to regenerate the .ipynb
+- Local merge script: `four_track/jupyter/perch-train-soundscapes-extract/merge_partitions.py` (expects PARTITION_COUNT=4 currently — **needs update to 2** before merge step)
+
+**After Kaggle finishes (~23:00 EDT):**
+
+1. Download both partition outputs:
+   ```bash
+   mkdir -p /tmp/perch_ss_p0 /tmp/perch_ss_p1
+   kaggle kernels output stevewatson999/birdclef-2026-perch-train-soundscapes-extract-p0 -p /tmp/perch_ss_p0
+   kaggle kernels output stevewatson999/birdclef-2026-perch-train-soundscapes-extract-p1 -p /tmp/perch_ss_p1
+   ```
+2. **Update `merge_partitions.py`**: change `PARTITION_COUNT = 4` → `2`, `PART_DIRS = [.../v0, .../v1]`, `_pXof4` → `_pXof2`. Stage to `kaggle_datasets/train-soundscapes-perch/`.
+3. **Build `eval_l3prec_x_protossm_broader_oof.py` (teacher smoke gate, task #18):** load (a) L3-prec 5-fold sigmean probs on broader-pool val [already exists in `four_track/data/l3_precursor_broader_oof.npz`], (b) ProtoSSM probs on broader-pool val using the new Kaggle-Perch features [needs Perch on val pool too — see "Open issue" below]. Combine under sig-mean and rank-mean. Report ensemble AUC vs L3-prec standalone 0.8700. **Gate: combined ≥ 0.8800 (≥+0.010 over L3-prec standalone). If combined < L3-prec standalone, the L4-v2 mechanism is dead before training.**
+4. **If teacher gate passes:** generate L4-v2 pseudo on train_soundscapes using the combined teacher (rank-mean of L3-prec SED + ProtoSSM). Apply same threshold-calibration logic as §36.1 (probably threshold ~0.55-0.65, will need to recompute the matched-precision point against A2 baseline).
+5. **Train L4-v2 fold-0 smoke** with `--ckpt-suffix _l4v2`. Same gate matrix as §36.1.
+
+**Open issue (must resolve before step 3):** The Kaggle kernels currently only extract Perch on `train_soundscapes/` (the 10,592 unlabeled pool). To smoke-gate the combined teacher on broader-pool val (1478 windows from 66 LABELED soundscapes), we also need Perch features on those 66 files. Two options: (a) extract a tiny additional Kaggle kernel for the 66 val files (~5 min Kaggle CPU); (b) modify the existing kernel to include ALL soundscapes (10,658 = 10,592 + 66) and filter downstream. Option (a) is simpler — push a quick smoke-style kernel with just the 66 val files when needed.
+
+### §36.3 — Decision tree for next session
+
+```
+WHEN L4-v1 fold-0 finishes (~02:40 EDT):
+  Run eval_l4v1_fold0_broader_oof.py (clone + minimal edit of eval_l3_precursor_broader_oof.py)
+  Apply §36.1 gate matrix:
+    < 0.8596  → ABORT L4-v1, doc kill in memory, wait for L4-v2
+    0.86-0.87 → marginal, document, defer 5-fold decision
+    ≥ 0.8722  → DISPATCH full L4-v1 5-fold (4+1 split: DT folds 1-4, skynet fold 0 ckpt already exists)
+                 ~9h wall-clock to complete, then 5-fold broader-pool eval
+
+WHEN Kaggle extraction finishes (~23:00 EDT):
+  Pull both partitions, merge, stage as Kaggle dataset
+  Push small Kaggle kernel to extract Perch on the 66 val files (~5 min)
+  Build eval_l3prec_x_protossm_broader_oof.py for combined-teacher gate
+  Apply gate:
+    combined < L3-prec (0.8700) → ABORT L4-v2, write closeout, accept v75 0.933
+    combined < 0.8800            → L4-v2 hypothesis weak, train fold-0 only as final probe
+    combined ≥ 0.8800            → DISPATCH L4-v2 pseudo gen + fold-0 smoke
+
+IF BOTH L4-v1 AND L4-v2 GATE-FAIL:
+  Write the within-arch-exhausted closeout. Accept v75 0.933 as final.
+  Possibly push a v78 LB probe with L3-prec standalone (information-value only,
+    expected ΔLB +0.0024 below noise). Decide based on remaining LB slots.
+```
+
+### §36.4 — Residual SSM investigation outcome (not a lever, do not reopen)
+
+Investigated 2026-05-21 ~17:55 EDT. Findings:
+- ResidualSSM is **already wired and active in production** at `correction_weight = 0.10`. Not a dormant lever.
+- `ENSEMBLE_WEIGHT_PROTO = 0` does NOT gate ResidualSSM (per Explore agent finding — they're independent in code).
+- iter934's `correction_weight = 0.35` was tried as v77 yesterday → LB 0.930 vs v75 0.933, regressed, reverted. See `project_v77_l1_correction_weight_neutral`.
+- `models/protossm_pretrained/residual_ssm.pth` is NOT what runs in production (Cell 36 trains fresh in-kernel each run); the local .pth is a side-experiment artifact.
+- Remaining ResidualSSM variations (other weights, architecture tweaks, longer training) would each cost ≥1 LB slot for expected gains in the noise floor.
+
+**Do not reopen ResidualSSM tuning as a lever.** Closeout filed in this session's memory; the "easy structural" version has been tried.
+
+### Files modified this session (for git context)
+
+- `four_track/new_plan.md` — §35 L3 closeout added + this PICK UP HERE
+- `four_track/src/train_a1.py` — added `--ckpt-suffix` flag + threading through `train_one_fold` (3 surgical edits, lines ~201, ~363, ~553)
+- `four_track/src/l4_emit_pseudo_l3prec.py` — NEW (clone of a2_pseudo_label_a1.py with raw state-dict loading for seed123_ce ckpts)
+- `four_track/src/eval_l3_precursor_broader_oof.py` — NEW
+- `four_track/src/eval_a2_x_l3_precursor_bag.py` — NEW
+- `four_track/scripts/l4_fold0_smoke_dt.sh` — NEW
+- `four_track/jupyter/perch-train-soundscapes-extract/` — NEW (build_notebook.py adapted from perch-train-audio-extract, kernel-metadata.json, merge_partitions.py)
+- `four_track/jupyter/perch-train-soundscapes-extract-p1/` — NEW (clone of above with PARTITION_ID=1)
+- Memories added: `project_l3_multirecipe_bag_killed`, `project_l3_prec_recipe_upgrade`
+
+### Deadline reminder
+
+Competition deadline **2026-06-03 — 13 days from now**. v75 LB 0.933 vs public-reproducible 0.947 leaves ~0.014 headroom. L4 prior +0.002–0.008 with 30–40% pass-noise probability would, if it lands, close ~half that gap.
+
+### §35 — L3 closeout (broader-pool eval results) [historical, kept for reference]
+
+| Operator | A2 5-fold | L3-prec 5-fold | Bag (10 ckpts) | Δ bag vs A2 | Δ bag vs stronger |
+|---|---|---|---|---|---|
+| sig-mean | 0.8402 | **0.8700** | 0.8481 | +0.0079 | **−0.0219** |
+| rank-mean | 0.8417 | 0.8682 | 0.8608 | +0.0206 | **−0.0092** |
+
+Per-fold L3-prec broader-pool: 0.8596, 0.8455, 0.8536, 0.8500, 0.8431 (mean 0.8504). Uniformly above A2 per-fold.
 
 **Two findings:**
 
-1. **NFNet has no salvage value.** The blend sweep is strictly monotonic from w=0 (0.7458) to w=1 (0.7017) with only a +0.0004 bump at w=0.05 — well inside noise on 1478 rows × 75 present classes. Apples-to-apples single-fold comparison is A1-f0 0.7414 vs NFNet-f0 0.7458 = +0.0044, also inside noise. A real stacker win would show a bowl-shaped AUC curve with a clear interior optimum; a monotonic sweep means the two models are not diverse, one is just slightly better in isolation. **Delete `models/a3/` and `models/a3_v3/` — Track A3 is fully closed including salvage.**
+1. **Bag-vs-stronger-standalone is negative under both operators** → A2 actively damps L3-prec's better predictions. The plan's gate (bag vs A2 anchor) was answering the wrong question; under the diversity-correct test (bag vs stronger), L3-prec ⊕ A2 fails.
+2. **L3-prec standalone is +0.030 broader-pool above A2** purely from the recipe change (ASL→CE, seed42→seed123, mixstyle 0.5→0). This is a real recipe upgrade — large enough to be informative but **below the +0.05 broader-pool slot rule** (expected ΔLB at transfer ratio 0.08 = +0.0024, below the ±0.005 LB SE noise floor).
 
-2. **A1's soft-vote ensemble exhibits severe cross-fold calibration drift.** The stored 5-fold soft-vote (0.7017) is *worse* than 4 of its 5 individual folds (fold-0 = 0.7414, fold-1 = 0.7232, fold-2 = 0.6970, fold-4 = 0.7250, only fold-3 at 0.6636 is worse). Averaging sigmoids across folds with different temperature/bias calibration is destroying signal. This is **a real D1-style finding independent of Track A3**: before the 5-fold ensemble averages sigmoids on Kaggle (which is what the current A1 submit path does via rank fusion with B1), the folds should be temperature-scaled to a common calibration — e.g. fit one scalar T per fold on a held-out slice, then soft-vote on `sigmoid(logit/T)`. Plan estimate on this finding alone: unknown, but the gap between per-fold and soft-vote here is 0.04 AUC, which is enormous relative to the +0.002–0.004 D2 stacker estimate. Worth exploring as **D1-b (per-fold temperature scaling)** separately from the D2 stacker work. Note: A1's Kaggle submit uses *rank fusion* with B1, not raw soft-vote, which may already implicitly sidestep this — verify before investing in D1-b. Also note the A1 "ensemble here = 0.7017 vs LB = 0.933" gap means this local soundscape val set is not a calibrated proxy for LB in absolute terms; any D1-b finding would need LB confirmation before committing.
+**Decision:** L3 lever exhausted. (c)(d)(e) would cost ~12h DT and is unlikely to reverse the bag-vs-stronger sign. Skipped.
 
-**Recommended next item: D2-β (Kaggle-side OOF dump → local LightGBM stacker)**, because:
-1. Answers the real stacker question (does combining A1+B1+ProtoSSM beat the current A1+B1 rank fusion?) that D2-γ could not.
-2. Unblocks D3 (per-taxon ensemble weights) as a natural follow-on.
-3. Hard constraint re-grep before starting: per the `feedback_regrep_constraints` memory, re-grep both `four_track/new_plan.md` and `../plan.md` for "must be trained on Kaggle" / DOA / embedding mismatch hazards **before** committing to a D2-β implementation design. The C2 kill established that constraint-oversight costs ~1 day; do not repeat it.
+Eval artifacts:
+- `four_track/src/eval_l3_precursor_broader_oof.py`
+- `four_track/src/eval_a2_x_l3_precursor_bag.py`
+- `four_track/data/l3_precursor_broader_oof.npz`
+- `four_track/log/eval_l3_precursor_*.log`
+- `four_track/log/eval_a2_x_l3_bag_*.log`
+- Training logs archived at `four_track/log/archive/l3_precursor_{skynet,dt_dispatch}_*.log`
 
-##### D2-β design (planned 2026-04-11)
+### Critical-thinking flag (carry into the gate decision)
 
-**Prerequisite re-grep (done 2026-04-11):** Both plan files re-grepped for "must be trained on Kaggle" / DOA / embedding-mismatch hazards per `feedback_regrep_constraints`. Result: constraint is **live and binding** for both B1 and ProtoSSM — both consume Perch v2 embeddings, and local Perch ≠ Kaggle Perch (the canonical lesson from #32/#34A/C2). Any OOF dump for B1 or ProtoSSM **must** come from a Kaggle kernel run; a local dump would inject the same embedding-mismatch poison that killed C2.
+**The pseudo-manifest is identical between A2 (a) and L3-precursor (b).** Both train on `a2_pseudo_manifest.csv` — pseudo-labels generated by A2 itself. The recipe knobs that differ are loss (ASL→CE), seed (42→123), mixstyle (0.5→0). The pseudo-targets carry A2's representation and partially anchor (b)'s solution toward A2's regardless of the loss-landscape difference.
 
-**Key infrastructure findings (from 2026-04-11 exploration):**
+Implications:
+- If broader-pool comes in at the marginal 0.80–0.85 band, the structural reason is pseudo-coupling — *not* "recipe diversity doesn't work in principle."
+- Training (c) `v5_ce_s456` (different seed only) shares this coupling. Same anchor.
+- **The actual decoupling lever is (d) `v5_focal_pseudo_r2`** — pseudo round-2 generated by a *different teacher* (full SED+ProtoSSM ensemble, not A2-alone). That's the one that breaks the anchor.
+- Consider whether (d)'s pseudo round-2 generation step is worth starting *pre-emptively* before the gate fires (parallel work, separate machine), so the critical path is shorter if the gate passes marginal.
 
-1. **Canonical submit notebook**: `jupyter/protossm-postproc/birdclef2026-protossm-postproc.ipynb` — single integrated notebook that runs ProtoSSM (baseline) → B1 rank fusion (cell 36b, injected via `inject_b1_cell.py`) → A1 rank fusion (cell 37, injected via `inject_a1_cell.py`). The injected cells live in `four_track/src/b1_perceiver.py` (B1 cell) and `four_track/src/a1_notebook_cell.py` (A1 cell). This is the notebook to modify for the D2-β OOF dump.
-2. **Fold alignment**: B1 and ProtoSSM both use **GroupKFold(5) on identical `file_groups`** (unique labeled-soundscape file IDs). `four_track/src/b1_perceiver.py:29` explicitly states "Reuses ProtoSSM's `file_groups` so the splits [are identical]". A1, by contrast, uses `MultilabelStratifiedKFold(5)` **on train_audio focal clips** — a completely disjoint data distribution from soundscapes. **Crucial implication: A1 never trains on any soundscape file, so A1's predictions on any soundscape segment are automatically out-of-fold regardless of which GroupKFold split that segment falls into.** A1 can contribute a single non-fold-dependent "ensemble rank" feature per row; B1 and ProtoSSM contribute genuine OOF features that respect the GroupKFold holdout structure.
-3. **Common substrate**: The B1+ProtoSSM OOF row space is **708 rows = 59 files × 12 windows/file** where each window is a fixed 5s slice at `t ∈ {0, 5, 10, …, 55}` in a 60s soundscape file. That 708-row substrate has `y_flat` labels (derived from `train_soundscapes_labels.csv`) and is the natural stacker training substrate. The 1478-segment count used by `build_soundscape_val` in `train_a1.py` is a different tiling strategy and is not needed for D2-β.
-4. **A1 aggregation (verified 2026-04-11)**: `a1_notebook_cell.py:189-206` rank-averages the 4 A1 folds (`A1_FOLDS = {0,1,2,4}`, fold 3 intentionally excluded). A1's stacker feature should mirror this — use rank-averaged A1 output, not raw sigmoid mean, so the feature space the stacker learns on matches what it will see at inference.
-5. **Local ProtoSSM OOF at `models/protossm_pretrained/oof_predictions.npz` is POISONED**. File date 2026-04-03 22:41 matches the #32 submission ("Pre-train ProtoSSM locally, inference-only on Kaggle, 0.922 LB"), which was the canonical case of the local-Perch-embedding trap. **This file must not be used as a D2-β stacker input.**
+### Lever priors snapshot
 
-**Phase 1: Kaggle-side OOF dump kernel (≈½ day)** — **scoped and implemented 2026-04-11**
+Local LB SE is ±0.003. Anything <+0.005 expected LB gain is invisible.
 
-Goal: one-shot kernel run (`MODE="train"`) on the canonical `birdclef2026-protossm-postproc` notebook that produces a downloadable artifact `/kaggle/working/d2_beta_oofs.npz` containing `{a1_ranks, b1_oof, proto_oof, y_true, file_groups, fold_ids, n_windows, a1_folds}` on the shared 708-row substrate (59 labeled train_soundscapes files × 12 windows/file).
+| Lever | Prior gain | Pass-noise-floor probability |
+|---|---|---|
+| L3 (multi-recipe SED bag, 5d DT including precursor) | +0.003–0.012 | ~40–50% |
+| L4 (iter-pseudo round 2 ensemble teacher, 3d DT) | +0.002–0.008 | ~30–40% |
 
-**Key scoping finding (2026-04-11):** Phase 1 is *much* smaller than originally sketched. In the existing canonical notebook, cell 31b (`b1_perceiver.py:CELL_31B`) **already computes `oof_proto_flat`, `oof_b1_flat`, `y_flat`, and `file_groups` on the 708-row substrate in every `MODE="train"` run** — these are inputs to the existing B1 OOF gate and correlation sweep, and they're already used by cell 31b for its own diagnostics. What was missing was just (a) an A1 pass on the same 59-file substrate and (b) a `np.savez` call to persist everything. No fold-loop retraining, no disjoint-holdout reimplementation, no notebook fork.
+### Don'ts (still in force)
 
-**Actual Phase 1 scope (implemented):**
+- **Don't dispatch any GPU run without the pre-flight checklist** (archive + clean log dirs + `nvidia-smi` target). Memory `feedback_always_clean_logs_before_dispatch`.
+- **Don't propose anything in the Killed Directions table** without strictly different mechanism. L2 (BirdNET 3rd branch) and T1 (per-class thresholds) are newly killed.
+- **Don't propose AST or non-CPU-feasible backbones in production** — `feedback_ast_cpu_infeasible`.
+- **Don't propose single-config copies from top notebooks** with expected LB gain <+0.005 — `project_v77_l1_correction_weight_neutral`.
+- **Don't relax the +0.05 broader-pool gate by fiat.** v77 gave one data point; need multiples to recalibrate.
+- **Don't trust §34.4-style compute estimates** without re-deriving against the actual recipe — `feedback_verify_compute_time_estimates`.
+- **Don't benchmark new probes against v76 (LB 0.932)** — v75 (LB 0.933) is the LB high.
 
-1. **New cell source** at `four_track/src/d2_beta_oof_cell.py:CELL_SOURCE` (220 lines). Injects one new cell ("cell 31c") that runs only in `MODE="train"`:
-   - Asserts `oof_proto_flat / oof_b1_flat / y_flat / file_groups / full_paths` exist with expected shapes.
-   - Runs A1 streaming inference on `full_paths` (the same 59 labeled files B1/ProtoSSM OOF'd on) using the identical mel + PCEN pipeline as cell 37's submit-path A1 fusion (`a1_notebook_cell.py:106-124`), then rank-averages per class across the 4 A1 folds `{0,1,2,4}`. Produces `a1_ranks_oof` of shape `(708, 234)`.
-   - `np.savez`s all eight arrays to `/kaggle/working/d2_beta_oofs.npz`.
-   - Logs sanity numbers (`a1_ranks_mean`, `b1_oof_mean`, `proto_oof_mean`, `y_true_positives`, `present_classes`, `file_size_mb`, `wall_time_seconds`) into `LOGS["d2_beta_oof_dump"]` so run history shows dump health without needing to download first.
-   - In `MODE="submit"` this cell is a single-line no-op — it's safe to leave injected permanently on the LB notebook without affecting LB 0.933.
-2. **New injector** at `four_track/src/inject_d2_beta_oof_cell.py` mirroring `inject_a1_cell.py` / `inject_b1_cell.py`:
-   - Idempotent: replaces in place on re-injection, otherwise inserts after the B1 OOF cell (anchor marker `"# Cell 31b — Track B1 PerceiverIO instantiate"` at `b1_perceiver.py:478`).
-   - Does **not** add any new `kernel-metadata.json:dataset_sources` entry — the only external dataset the D2-β cell needs is `stevewatson999/birdclef-2026-a1-effb0-ckpts`, already added by `inject_a1_cell.py`.
-3. **Validation (2026-04-11)**:
-   - `ast.parse(CELL_SOURCE)` passes — cell source is syntactically valid Python.
-   - B1 anchor marker is present in exactly one cell of the canonical notebook (index 33), so the injector will insert at index 34 unambiguously.
-   - D2-β marker is not yet present in the notebook (as expected — injector has not been run yet).
+### Deadline + time-box reminder
 
-**Runtime to execute Phase 1 on Kaggle (estimated):**
-- Baseline train-mode kernel wall time (without this cell): ~30-45 minutes (ProtoSSM OOF + B1 OOF + rest of postproc pipeline).
-- Additional cost of the D2-β cell: A1 streaming inference on 59 files × 12 windows × 4 folds. On the submit path the same operation on hidden-test (~700 files × 12 × 4) takes a few minutes — for 59 files it should be ≤1 minute. Negligible relative to the full kernel run.
-- Total: well under the 9h Kaggle kernel cap. No risk.
+Competition deadline **2026-06-03 — 14 days from now**. Public top 0.962, public-reproducible ≥0.947. v75 at 0.933 has 0.014–0.029 LB headroom. Intuition pump: "what's in iter934 / 0.947 that we don't have?" — adopt before invent.
 
-**Phase 1 execution checklist** — **COMPLETE 2026-04-11**:
-
-All steps done end-to-end in one session. Commit trail:
-
-- [x] Write `four_track/src/d2_beta_oof_cell.py` (cell source).
-- [x] Write `four_track/src/inject_d2_beta_oof_cell.py` (injector).
-- [x] Validate `ast.parse(CELL_SOURCE)`; B1 anchor at unique index 33; D2-β marker initially absent.
-- [x] `jupyter nbconvert --clear-output --inplace` → commit `1ec4c0c6d1` "protossm-postproc: clear notebook outputs".
-- [x] Run injector → D2-β cell inserted at index 34, commit `9573e3aa40` "D2-β Phase 1: inject OOF-dump cell into protossm-postproc".
-- [x] Flip cell 1 `MODE = "submit"` → `MODE = "train"`, commit `1b4c5eac7c` "D2-β Phase 1: flip MODE to train for OOF dump run".
-- [x] `kaggle kernels push` → **v25**. Kernel ran ~1000s and crashed at final `np.savez` with `ValueError: invalid literal for int() with base 10: np.str_('S08')` — cell forced `dtype=np.int64` on `file_groups`, but the OOF substrate uses site-ID strings (`S03`, `S08`, …) not ints. All expensive work (ProtoSSM OOF, B1 OOF, A1 OOF inference 225.8s) succeeded; failure was only in the save step.
-- [x] Fix: factorize `file_groups` into contiguous ints via `np.unique(..., return_inverse=True)`, keep string names as separate `file_group_names` side array. Commit `1240bea6b4` "D2-β Phase 1: fix file_groups int cast in OOF dump cell".
-- [x] Re-push → **v26**. Ran successfully end-to-end in ~1000s. A1 OOF sub-pass wall time 195.7s.
-- [x] Download `/kaggle/working/d2_beta_oofs.npz` → saved as `four_track/data/d2_beta_oofs.npz` (2.66 MB).
-- [x] Revert `MODE = "submit"`, commit `125383ec71` "D2-β Phase 1: revert MODE to submit — LB 0.933 production state restored".
-- [x] `kaggle kernels push` → **v27**. Canonical notebook back to LB-ready state; D2-β cell remains injected but is a no-op in submit mode.
-
-**Kaggle-side cost actual:** 2 kernel runs (one failed at the np.savez step, one clean). No LB submission slots consumed.
-
-**OOF artifact contents** (`four_track/data/d2_beta_oofs.npz`, 2.66 MB):
-
-| Key | Shape | Dtype | Note |
-|---|---|---|---|
-| `a1_ranks` | (708, 234) | float32 | rank-averaged A1 over folds {0,1,2,4}, per-col rank ∈ [0,1]; macro AUC on 71 active classes = **0.7359** |
-| `proto_oof` | (708, 234) | float32 | ProtoSSM OOF logits (range −5.9 … +5.9); macro AUC = **0.6353** |
-| `b1_oof` | (708, 234) | float32 | PerceiverIO OOF logits (range −3.4 … +1.0); macro AUC = **0.4028** — near-random, consistent with the structurally-broken B1 OOF on this 59-file substrate |
-| `y_true` | (708, 234) | float32 | 3087 positives, 71 active classes |
-| `file_groups` | (59,) | int64 | 8 unique site groups (not 59!) |
-| `file_group_names` | (8,) | \<U3 | `['S03','S08','S13','S15','S18','S19','S22','S23']` |
-| `fold_ids` | (708,) | int64 | 12-tiled `file_groups` |
-| `n_windows` | scalar | int64 | 12 |
-| `a1_folds` | (4,) | int64 | `[0,1,2,4]` (fold 3 intentionally excluded) |
-
-**Important structural finding**: `file_groups` yields only **8 unique site-level groups**, not 59 per-file groups. GroupKFold on this substrate is bounded at ≤8 splits; 5-fold GroupKFold is safe. This is a meaningfully smaller CV denominator than what the Phase 2 design below assumed ("59 file-level units"). The noise-floor comments in §Risks remain directionally right but slightly pessimistic — with only 8 groups, per-fold ΔAUC variance is dominated by which sites land together, not how many files are held out. Plan Phase 2 with 5 seeds as baseline and 10 seeds if marginal.
-
-**Phase 2: Local LightGBM stacker (≈½ day)**
-
-File: `four_track/src/d2_lgbm_stack.py`.
-
-Design:
-1. Load `d2_beta_oofs.npz`. Reshape into a long format: `708 rows × 234 classes = 165_672 samples`, each with features `[logit_a1, logit_b1, logit_proto, class_id]` (convert sigmoids back to logits for the blender; `class_id` is a categorical feature so the tree can learn per-class biases). Target: `y_true.flatten()`.
-2. **5-fold GroupKFold on `file_groups`** — NOT segment-level, NOT sample-level. The D1-a postmortem proved segment-level splits leak via the per-file tie structure. Class-level and sample-level splits would also leak because each file contributes 12×234 samples with highly correlated labels. The only safe split is by `file_groups`.
-3. Fit **one LightGBM binary classifier** over all classes (shared across classes via the `class_id` categorical feature). Alternative: start with a **simpler baseline** — a single-parameter logistic blender `P = σ(w_A · logit_a1 + w_B · logit_b1 + w_P · logit_proto + b)` fit per class or shared. LightGBM can overfit with only 59 file-level units in the outer CV; fit the logistic baseline first and only escalate to LightGBM if the logistic baseline shows positive signal.
-4. **Evaluation**: macro ROC-AUC on the `y_true[class present in fold k]` subset, aggregated across 5 GroupKFold folds. Repeat 5 seeds, take median. Baseline to beat: the existing rank-fusion output (A1+B1+ProtoSSM with frozen weights w_A1=0.20, w_B1=0.10) on the same 708-row substrate — the kernel should dump that baseline output as `final_test_scores_baseline` in the same npz so we have an apples-to-apples reference.
-5. **Gate before spending a Kaggle submission slot**: median Δ over 5 seeds ≥ **+0.001** macro ROC-AUC AND sign-stable across all 5 seeds (no seed regression). Stricter than the D1-a gate because (a) the stacker adds 3+ parameters vs D1-a's one-per-class isotonic and (b) the 708-row substrate is small enough that a +0.001 delta is only ~2x the sampling noise floor.
-
-**Phase 3: Kaggle integration (≈½ day, only if gate passes)**
-
-If the gate passes, inject the fitted stacker into `birdclef2026-protossm-postproc` as a new cell **after** the A1 rank fusion but **before** the post-processing thresholds (cell 38). Implementation: ship the fitted LightGBM model (or logistic weights) as a Kaggle dataset, load in the notebook, apply to the A1+B1+ProtoSSM per-class outputs, rewrite `final_test_scores` via the same inverse-CDF pattern the A1 and B1 cells already use so downstream thresholds remain valid. One submission. If LB ≥ 0.933 + 0.001, freeze the stacker; otherwise roll back and file the result in `new_plan.md`.
-
-**Risks / failure modes to watch**:
-- **59-file CV noise floor.** With only 59 files in the GroupKFold base pool, single-seed ΔAUC has a std of ~0.002-0.005; the +0.001 gate is aggressive and may demand more seeds to confirm sign. If the gate is marginal, upgrade to 10 seeds before deciding.
-- **A1 rank vs A1 sigmoid mismatch.** A1's per-class rank is bounded in [0,1] while B1/ProtoSSM are sigmoid outputs. The stacker needs a consistent input representation — either rank-transform B1 and ProtoSSM per class to match A1, or convert A1 back to a logit-like scale. Prefer the former (rank-space) because the Kaggle submit path already lives in rank space for the fusion stage.
-- **Label sparsity.** 708 rows × 234 classes with ~25-per-class median positive count means most classes will have 0-1 positives per fold. The macro AUC aggregation will collapse to a small set of "present" classes per fold. Document how many classes are present per fold in the kernel output for sanity checking.
-- **LB ≠ local delta.** D1-a's failure reminded us that file-level local CV on 59 files is a noisy estimator of LB. The +0.001 local gate should be treated as a minimum, not a prediction — plan for the Kaggle LB to move somewhere in `[local Δ − 0.003, local Δ + 0.003]`.
-
-**Explicit non-goals for D2-β**:
-- No per-taxon weight tuning (that's D3, gated on a successful D2).
-- No retraining of A1, B1, or ProtoSSM (D2-β is strictly post-processing).
-- No attempt to reuse the poisoned `models/protossm_pretrained/oof_predictions.npz` — delete or ignore it in the D2-β workspace.
-- No local evaluation on the 1478-segment `eval_a1_ensemble.py` val set — that val set is on a different row space and uses `sigmoid-mean` A1 which is the wrong baseline (per the `project_a1_calibration_drift` memory).
-
-### Track C — ProtoSSM-as-teacher pseudo-labels on train_audio (medium-low lift)
-
-**Hypothesis**: `train_audio` has ~46K focal clips. We currently use exactly **0** of them for ProtoSSM training (ProtoSSM only sees ~720 fully-labeled `train_soundscapes` files). Pseudo-labeling these with ProtoSSM and retraining gives the model 60× more data.
-
-**Why this might work where #34E (Perch logits as pseudo-labels) failed**: Perch logits are too noisy. ProtoSSM predictions are calibrated, OOF-valid, and respect the soundscape distribution. They won't have the "always-on" failure mode of Perch on noisy audio.
-
-**Concrete subtracks**:
-
-| ID | Description | Risk | Expected lift |
-|----|-------------|------|---------------|
-| C1 | **Extract Perch v2 embeddings** for all 46K train_audio clips locally. Cache to a Kaggle dataset. | LOW | enables C2 — **DONE 2026-04-09** |
-| C2 | **Pseudo-label C1 embeddings** with current ProtoSSM. Filter to (max_conf > 0.6) ∧ (primary_label is in top-3). Retrain ProtoSSM on union of trusted soundscapes + filtered focal clips. | MED | +0.002 to +0.005 |
-| C3 | **Iterate**: use the C2 model to re-pseudo-label, retrain again. 1–2 iterations max (diminishing returns). | LOW | +0.001 to +0.002 |
-
-**Gates**:
-- C2 OOF AUC on the original 720-file holdout **must improve** vs the C0 ProtoSSM baseline. If equal/worse, kill — pseudo-labels are corrupting the signal.
-- After C1 cache exists, C2 is just retraining ProtoSSM with bigger input — minimal Kaggle integration risk.
-
-**Estimated work**: C1 ~1 day (Perch embedding extraction is well-understood from `perch_v2/`). C2 ~2 days. C3 ~1 day.
-
-### Track D — Recalibration & stacking (low lift, do last)
-
-Apply *after* tracks A/B/C have produced their model branches. None of this works on a single-architecture pipeline — we already exhausted that surface.
-
-| ID | Description | Risk | Expected lift |
-|----|-------------|------|---------------|
-| D1 | **Per-class isotonic calibration** of each branch on OOF, then rank-average. Done correctly (no train-leak), unlike #25B which overfit. | LOW | +0.001 to +0.002 |
-| D2 | **Stacking meta-learner** (LightGBM) over branch predictions + metadata features (site, hour, file-level confidence). | MED | +0.002 to +0.004 |
-| D3 | **Per-taxon ensemble weights** instead of one global blend weight. Taxon with strongest signal source dominates. | LOW | +0.001 to +0.003 |
-
-**Gates**:
-- D1/D2/D3 must each show OOF improvement before LB submission (we burned slots on #25B/#34E learning this).
+§33's 3-day box expired 2026-05-19; §34 closed 2026-05-20. **No more compute on bird-audio-pretrain, ensembling-operator variants, or within-arch bagging.** L3 (recipe diversity) and L4 (pseudo round 2) are the remaining sanctioned levers.
 
 ---
 
-## 3. Sequencing
+## 📌 PICK UP HERE — INVALIDATED 2026-05-23 ~23:45 EDT, see §43 (end of file) for current state
 
-Run tracks in parallel where possible. Hardware constraint: only one GB10 box, so local training serializes.
-
-```
-Week 1 (Apr 6–12)
-  ├─ A1: Train PCEN+ASL EffB0 on train_audio (5-fold, 25ep)            [local, ~24h]
-  ├─ C1: Extract Perch v2 embeddings for train_audio (~46K clips)      [local, ~12h]
-  └─ Submit current v16 daily, monitor LB
-
-Week 2 (Apr 13–19)
-  ├─ A1: Export to ONNX, integrate into notebook, LB gate              [Kaggle slot]
-  ├─ B1: Prototype PerceiverIO head locally on cached embeddings       [local, ~8h]
-  └─ C2: Pseudo-label train_audio with ProtoSSM, retrain               [local, ~24h]
-
-Week 3 (Apr 20–26)
-  ├─ A1+ProtoSSM ensemble LB submission                                 [Kaggle slot]
-  ├─ A2: Self-train A1 with ProtoSSM pseudo-labels                     [local]
-  └─ B1: Integrate into notebook if OOF gate passes                    [Kaggle slot]
-
-Week 4 (Apr 27 – May 3)
-  ├─ A3: Second backbone (EffNetV2-S or NFNet-L0)                      [local]
-  ├─ D1: Per-class isotonic calibration on combined ensemble           [local]
-  └─ Final ensemble LB submission                                      [Kaggle slot]
-
-Week 5+ (May 4 onward)
-  ├─ D2/D3: Stacking + per-taxon weights if D1 lifts above 0.933       [local + LB]
-  └─ Final tuning toward May 27 entry deadline
-```
-
-**Daily Kaggle submission slots**: 5/day. We have ~50 days to entry deadline (May 27) → ~250 slots. We will not run out — the constraint is *informativeness per slot*, not slot count. **Only submit when local OOF predicts an improvement.**
-
----
-
-## 4. Decision gates (kill criteria)
-
-A track is killed if any of the following triggers:
-
-| Track | Kill criterion |
-|-------|----------------|
-| A1 | Standalone LB <0.85 after 2 LB attempts |
-| A1 | A1 + ProtoSSM ensemble LB <0.928 (i.e. doesn't beat 0.927 baseline) |
-| A2 | Pseudo-label retrain doesn't improve A1 OOF |
-| A3 | Second backbone doesn't add to A1+A2 OOF |
-| B1 | Adds >10 min wall time **OR** OOF improvement <+0.001 |
-| B2 | Already abandoned (#34C2). Do not revisit unless headroom >15 min in submit budget. |
-| C1 | Perch embedding extraction doesn't complete in 24h locally |
-| C2 | C2 OOF on original holdout ≤ baseline ProtoSSM OOF |
-| C3 | C3 OOF ≤ C2 OOF + 0.0005 (diminishing returns floor) |
-| D1 | Doesn't add to held-out fold AUC |
-| D2 | Stacker overfits OOF (test-OOF gap > 0.005) |
-
-When a track is killed, **don't replace it with similar work**. Move to the next track in priority order.
-
----
-
-## 5. What's NOT in this plan and why
-
-- **More Perch-only post-proc tuning**: exhausted in #35A–#35H. Would not surprise me if the entire knob has ±0.001 left. Stop touching it.
-- **Pre-training Perch students locally**: dead path (#32, #34A). Local ≠ Kaggle.
-- **Replacing ProtoSSM**: ProtoSSM is the strongest Perch consumer we have at 0.927. Ablating it in favor of a hypothetical better head is not supported by the OOF data.
-- **Bigger TTA / more folds**: time-budget bound. Already tried (#31B v1/v2), all timed out.
-- **Retraining the 0.769 SED pipeline as primary**: dead path. SED is only useful as a secondary ensemble member now.
-
----
-
-## 6. Risk register
-
-| Risk | Likelihood | Mitigation |
-|------|-----------|------------|
-| `onnxruntime` not available on Kaggle no-internet env | MED | Verify in a no-op submission first. Brucewu1200 0.911 used a bundled wheel (#28A) — copy that approach. |
-| A1 standalone LB <0.85 (insufficient quality) | MED-HIGH | Train two backbones in parallel. The 2026 expert-labeled soundscapes are a much stronger supervision signal than 2025 had — A1 should be stronger than the Mar 0.769 ceiling. |
-| Local C1 embedding extraction is too slow / disk | LOW | Cached on GB10 with 128GB unified memory — comfortable. |
-| New ensemble pushes wall time over 90 min | HIGH | A1 inference is the new bottleneck. Budget: A1 inference ≤15 min, ProtoSSM training ≤25 min, Perch test ≤15 min, ResidualSSM ≤6 min, misc ≤8 min = 69 min. Build with explicit per-cell wall-time guards. |
-| Honest answer: 0.942 turns out to be unreachable | MED-HIGH | Acceptable end states: 0.933 (top-private parity) is a respectable result. 0.937 would be a public-notebook-tied competition winner. Adjust expectations as data comes in. |
-
----
-
-## 7. First action
-
-> **Status update 2026-04-07**: A1 5-fold training is **complete**. Mean per-fold val ROC-AUC = 0.7101, best 4-fold rank-avg ensemble (drop fold 3) = 0.7431. See §2 Track A "A1 training results (2026-04-07)" for the full analysis. **Next action is the first A1 LB attempt** via rank-space fusion at w=0.10 in the `protossm-postproc` notebook (see "A1 → LB integration strategy" in Track A). C1 below remains complete and is still ready to feed C2 if A1 is killed.
-
-> **Status update 2026-04-06**: C1 is **already complete**. `perch_v2/src/extract_embeddings.py` was previously run with `--per-window-audio`, producing both averaged and per-window Perch v2 embeddings for all 35,549 `train_audio` clips:
+> _Original §37 handoff (2026-05-23 ~00:20 EDT — L4-v2 main 5-fold in flight, autopilot will eval at ~16:15 EDT Sat)._
 >
-> | Asset | Path | Count |
-> |---|---|---|
-> | Averaged embeddings | `perch_v2/data/processed/perch_embeddings/train_audio/` | 35,549 |
-> | Per-window embeddings | `perch_v2/data/processed/perch_embeddings/train_audio_pw/` | 256,490 (~2.0 GB) |
->
-> Track C2 is therefore unblocked immediately — no embedding extraction step required.
+> **All prior PICK UP HERE sections are invalidated** (the §36-era one above included).
+> This is the single current handoff.
 
-The first action is now **A1** (highest expected lift): build a PCEN+ASL+Freq-MixStyle EffNet-B0 SED training script under `four_track/src/`, smoke-test it on one batch, then launch the 5-fold × 25-epoch run on the GB10.
+### TL;DR — one paragraph
 
-Kickoff command (after smoke test passes):
+L4-v1 KILLED (fold-0 broader-pool 0.8389 vs L3-prec fold-0 reference 0.8596; A3-pattern repeat). L4-v2 fold-0 seed-123 GATE-PASSED at broader-pool **0.9253** (+0.0657 over L3-prec fold-0; +0.0851 over A2 anchor 0.8402). Sanity-checked with seed-456 fold-0 retrain on DT: convergence pattern was robust across seeds (epoch 5 hit 0.9170 = inside ±0.010 pass window of 0.9253; killed mid-run to save compute). L4-v2 main run dispatched 2026-05-22 17:04 EDT: folds 1,2,3 sequential on DT + fold 4 in parallel on skynet. ~23h to all-five-folds done, autopilot will rsync ckpts + run 5-fold broader-pool eval automatically. **Verdict ETA: ~16:15 EDT Saturday 2026-05-23.** Production LB stays v75 0.933 until verdict.
 
+### §37.A — Current live processes (as of 2026-05-23 00:14 EDT)
+
+| Process | Host | PID | Status | ETA |
+|---|---|---:|---|---|
+| L4-v2 folds 1,2,3 sequential | DT | 2558879 | running, fold 1 ep 23/25 | DT all-3 done ~16:02 EDT Sat |
+| L4-v2 fold 4 | skynet | 1308128 | running, ep 8/25 | done ~14:02 EDT Sat |
+| Monitor (poll + rsync + 5-fold eval) | skynet | 1308836 | silent, polling DT log | fires after both above complete |
+
+**Wall-clock floor: DT's 3-fold sequential → ~16:02 EDT Sat. Verdict in monitor log by ~16:15 EDT Sat.**
+
+To check progress in the morning:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda activate kaggle
-cd /home/swatson/work/MachineLearning/kaggle/BirdCLEF/four_track
-nohup bash scripts/train_a1_5fold.sh > log/train_a1_5fold_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+tail -f log/l4v2_main_run_monitor_*.log  # monitor heartbeat (silent until verdict)
+tail -f log/l4v2_fold4_skynet_*.log      # skynet fold 4 epoch-by-epoch
+ssh deepthought "tail -f /home/swatson/work/MachineLearning/_runon/BirdCLEF/log/runon_deepthought_20260522_170350.log"  # DT folds 1,2,3
 ```
 
-While A1 trains, **Track C2** can run as a CPU-side data-prep job in parallel (it doesn't contend for the GPU once the pseudo-label dump is done).
+### §37.B — What the gate matrix says (when verdict lands)
+
+The 5-fold broader-pool ensemble AUC from `eval_l4v2_5fold_broader_oof.py` will print verdict against three anchors:
+
+| 5-fold ensemble | Action | Why |
+|---|---|---|
+| ≥ 0.8902 (A2 anchor +0.05) | **GATE-PASS — push v77 LB probe** | Clears `feedback_min_oof_delta_to_burn_slot` |
+| 0.8700–0.8902 | Above L3-prec but below +0.05 gate | Borderline; check OOF→LB transfer ratio. If you want one LB probe, this is the marginal case to consider — but expected ΔLB ≈ transfer × broader-pool delta = 0.08 × ~0.012 = ~+0.001, at the noise floor |
+| 0.8402–0.8700 | Below L3-prec anchor, above A2 | Main run regressed vs L3-prec recipe upgrade alone |
+| < 0.8402 | Below A2 anchor — L4-v2 lever falsified | Close out |
+
+### §37.C — Honest projection ranges at ~00:14 EDT Sat
+
+Based on fold 1 best so far (0.9244 at ep 14) and fold 4 best so far (0.9168 at ep 4), with folds 2,3 still to come:
+
+| Scenario | Per-fold mean | Ensemble lift | 5-fold ensemble | LB projection (×0.08 transfer) |
+|---|---:|---:|---:|---:|
+| Optimistic (folds 2,3 late-climb like fold-0) | 0.923 | +0.020 | 0.943 | LB ~0.945 |
+| Realistic (folds 2,3 like fold 4 = peak-then-plateau) | 0.918 | +0.015 | 0.933 | LB ~0.939 |
+| Pessimistic (high pseudo-manifest fold-correlation) | 0.918 | +0.010 | 0.928 | LB ~0.937 |
+
+All three scenarios gate-pass and project to **+0.004 to +0.012 LB over v75**. The fold-0 seed-123 0.9253 may have been a lucky pairing — early fold-1 / fold-4 results show peak-and-plateau pattern, not the late-epoch climb fold-0 exhibited (peak ep 21). Don't anchor expectations to 0.945; the realistic case is ~0.939.
+
+### §37.D — Decision tree for tomorrow
+
+```
+WHEN MONITOR EXITS (~16:15 EDT Sat 2026-05-23):
+
+  Read log/eval_l4v2_5fold_<timestamp>.log for the verdict.
+
+  IF ensemble ≥ 0.8902:
+    → Push v77 LB probe.
+    → Production kernel is jupyter/protossm-postproc/birdclef2026-protossm-postproc.ipynb.
+    → Slot the L4-v2 ckpts into the SED branch (same shape as L3-prec ckpts);
+      sig-mean across the 5 folds.
+    → Submit. Wait for LB. Compare to v75 0.933.
+    → If LB ≥ 0.938: declare v77 = new LB high. Save as final.
+    → If LB 0.933–0.938: within noise; check second submission if slots remain.
+
+  IF ensemble 0.8700–0.8902:
+    → Marginal. Expected ΔLB +0.001 at noise floor.
+    → Don't push unless you have spare LB slots (>2 unused) AND want a
+      data point for the transfer-ratio calibration question §36.4 raised.
+
+  IF ensemble < 0.8700:
+    → L4-v2 main-run regression. Add to Killed Directions table.
+    → Lever class "ensemble-teacher iter-pseudo round 2" then exhausted.
+    → Close out — v75 0.933 stays final.
+
+  ALSO check log/eval_l4v2_5fold_<timestamp>.log for per-fold AUCs.
+  If fold 4 (skynet) lands materially below DT folds, hardware-induced
+  fold variance is in play — not a recipe problem.
+```
+
+### §37.E — Artifacts created this session (2026-05-22 → 2026-05-23)
+
+| Path | Purpose |
+|---|---|
+| `data/l4l4_fold0_broader_oof.npz` | L4-v1 fold-0 single-fold OOF (0.8389) — kept for reference |
+| `data/l4l4v2_fold0_broader_oof.npz` | L4-v2 fold-0 single-fold OOF (0.9253) — kept for reference |
+| `models/a1/a1_<bb>_fold0_seed456_ce_l4v2.pt` | L4-v2 fold-0 seed-456 sanity ckpt on DT only (killed mid-run, partial) — NOT pulled back |
+| `scripts/l4v2_fold0_seed456_dt.sh` | Sanity-check dispatch (used, kept) |
+| `scripts/l4v2_seed456_monitor.sh` | Sanity-check monitor (used, kept) |
+| `scripts/l4v2_seed456_autopilot_dt.sh` | BUGGY first autopilot (runon-doesn't-block) — keep as cautionary example |
+| `scripts/l4v2_folds123_dt.sh` | Main run DT dispatch (running now) |
+| `scripts/l4v2_fold4_skynet.sh` | Main run skynet dispatch (running now) |
+| `scripts/l4v2_main_run_monitor.sh` | Main run monitor (running now) |
+| `src/eval_l4v2_5fold_broader_oof.py` | 5-fold broader-pool ensemble eval (will fire automatically) |
+| `src/eval_l4_fold0_broader_oof.py` | Modified to accept `--seed` arg |
+| `docs/nvidia_sm121_forum_post.md` | Draft NVIDIA developer-forum post requesting sm_121-tuned cuDNN. NOT POSTED yet. User decided to write the post but timing isn't competition-relevant. |
+
+### §37.F — Memories added this session (for cross-reference)
+
+- `feedback_runon_does_not_block` — `runon deepthought <cmd>` returns in <1s; autopilots must `until ssh deepthought "tail … grep -qE marker"` poll loop
+- `feedback_syncback_skips_four_track_models` — bare `syncback deepthought` only covers parent-BirdCLEF paths; four_track/models/ ckpts need explicit rsync
+
+### §37.G — Things to NOT do tomorrow
+
+- **Don't kill the running training processes** (DT PID 2558879, skynet PID 1308128, monitor PID 1308836). They'll complete naturally and the monitor handles the eval automatically.
+- **Don't trust the §37.C optimistic case** (LB 0.945). The realistic case (LB 0.939) and pessimistic case (LB 0.937) are both gate-passing too, but the trajectory in folds 1 and 4 has been peak-and-plateau rather than late-epoch climb. Anchor expectations to the realistic case.
+- **Don't push v77 to LB without first reading the per-fold AUCs.** If fold 4 (skynet) is materially weaker than fold 0 / 1 / 2 / 3, the ensemble may benefit from a drop-fold-4 variant per `feedback_per_fold_val_misleads_ensemble` — though that memory says don't drop folds without an actual rank-fusion probe.
+- **Don't trust skynet fold 4's val_v2 = broader-pool equality blindly.** It's verified true for L4-v2 fold-0 (0.9253 ≈ 0.9253) but the in-training val printout IS the broader-pool metric per `train_a1.py:75-110`.
+- **Don't restart the dispatch if a single fold fails.** Save the partial ckpts; you can run a 4-fold ensemble instead of 5-fold and document the asymmetry.
+
+### §37.H — Side-effect cleanups still outstanding (low priority)
+
+- The previous (buggy) autopilot's rsync left some metadata in parent `BirdCLEF/log/` and `BirdCLEF/data/processed/`. Audited 2026-05-22 — those files are LEGACY pre-four_track content; the rsync was a no-op (sent 1.4 KB of 7.16 GB). No action needed.
+- `data/l4l4_fold0_broader_oof.npz` and `data/l4l4v2_fold0_broader_oof.npz` have the double-suffix filename bug (the eval script's f-string concatenates `l4` + `{suffix}` where suffix is `_l4`). Cosmetic; the data inside is correct. Don't fix mid-run.
+
+### Deadline reminder
+
+Competition deadline **2026-06-03 — 11 days from now**. v75 LB 0.933 vs public-reproducible 0.947 = 0.014 headroom. L4-v2 verdict tomorrow determines whether we close that gap or close the book.
 
 ---
 
-## 8. Pantanal reverse-ablation (active 2026-04-15)
+## §38 — L4-v2 LB CLOSEOUT (2026-05-23 ~19:10 EDT)
 
-**Problem**: `jupyter/protossm-pantanal/` was snapshotted at V19
-(`bfceb494c4`) with the full pantanal-derived change set. That V19
-notebook **timed out on the LB scorer**. A leaner variant (the working
-tree at conversation start) scored **LB 0.931** without timing out.
+**LEVER KILLED.** L4-v2 5-fold (broader-pool OOF 0.9310 sig-mean, +0.091 over A2 anchor) regressed on LB despite the +0.05 broader-pool slot rule clearing by +0.041.
 
-**Goal**: identify which specific pantanal change(s) push the notebook
-over the LB time budget (and/or regress score) by re-applying them one
-at a time on top of the LB 0.931 baseline.
+| Kaggle ver | Config | LB | Δ vs v75 |
+|---|---|---:|---:|
+| v75 (anchor) | A2 ckpts + rank-mean | **0.933** | — |
+| v76 | A2 ckpts + rank-mean (rank-fusion intro) | 0.932 | −0.001 |
+| v77 | + L1 correction_weight 0.35 (REVERTED) | 0.930 | −0.003 |
+| **v78** | **L4-v2 ckpts + sig_mean** (§37.D pre-reg) | **0.928** | **−0.005** |
+| **v79** | **L4-v2 ckpts + rank-mean** (isolation) | **0.926** | **−0.007** |
 
-**Baseline commit** `b33ec1a7e2` — pure LB 0.931 state. Metadata:
-`brucewu1200/birdclef-2026-cvlb-assets-0911` +
-`stevewatson999/birdclef-2026-a1-effb0-ckpts` (not V19's
-`protossm-b1-ckpts`).
+v79 isolation submission proved **the ckpts themselves are the killer, not the reducer choice.** Reverting reducer (sig-mean → rank-mean) made it 0.002 worse, counter to `reference_cross_arch_rank_mean_fusion` expectations.
 
-**Workflow**:
-1. One commit per pantanal candidate, applied on top of the baseline.
-2. After each commit, push `stevewatson999/birdclef-2026-pantanal` to
-   Kaggle via `kaggle kernels push` and measure LB + wall time.
-3. If the commit regresses LB or causes a timeout: `git revert <sha>`
-   and move to the next candidate. If it's neutral/positive: keep it
-   and layer the next candidate on top.
-4. Each commit is small and isolated so that `git revert` returns the
-   tree to a clean known-good state (the baseline or the last
-   accepted ablation), never to V19.
+**Structural explanation (high confidence):** L4-v2 ckpts were trained on ProtoSSM-derived pseudo-labels. SED predictions now overlap in error patterns with the ProtoSSM branch in the 4-branch production ensemble. The 4-branch rank-blend gain collapses when two branches are correlated. The offline broader-pool gate was SED-only and structurally blind to this. Memory: [[project_l4v2_lb_regression]].
 
-**Candidate order** (smallest-net-delta first):
+**Falsified assumptions from §37.D pre-registration:**
+1. "OOF→LB transfer is roughly monotonic positive" — actual transfer was negative.
+2. "+0.05 broader-pool slot rule is a sufficient gate" — when the swap changes inter-branch correlation, SED-only OOF is structurally blind.
 
-| # | Candidate | HEAD cell | Δ lines | Status |
+**Production notebook reverted to pre-v78 state** (`bak_pre_v78_l4v2` → main file). A1_CKPT_DIR back to A2-ckpts, A1_FOLD_REDUCE back to "mean". L4-v2 ckpts + Kaggle dataset preserved for forensic re-runs.
+
+**Slot budget today:** 2/5 used (v78, v79). 3 remaining.
+
+---
+
+## §39 — Competitor postproc-lever audit (2026-05-23 ~19:25 EDT)
+
+Mined the top 7 BC2026 notebooks (mtoshidesu 0.947 reproducer + nina EoS-6 + ulyanov 0.945 + cliff376 + needless090 0.934 + maryna two-pass SSM + tucker distilled-SED). Cross-referenced against killed-lever memory.
+
+### Top 3 novel levers (all postproc, no retraining)
+
+| # | Lever | Where seen | Cost | Why >+0.005 |
 |---|---|---|---|---|
-| P10 | Score Fusion `.to(DEVICE)` / `.cpu()` | Score Fusion | +1 | **applied** (`d0fc7119db`) |
-| P5  | Cell 5 Perch inference | Cell 5 | +2 | pending |
-| P4  | Cell 4 helpers (V16/V17 NEW) | Cell 4 | +8 | pending |
-| P6  | Cell 6 Perch cache | Cell 6 | +11 | pending |
-| P7  | Cell 24 ProtoSSM v4 training loop | Cell 24 | +18 | pending |
-| P9  | Cell 31b PerceiverIO OOF+retrain | Cell 31b | +16 | pending |
-| P11 | Cell 17 A1 SED fusion | Cell 17 | +17 | pending |
-| P8  | Cell 31 Instantiate+train ProtoSSM v4 | Cell 31 | +27 | pending |
-| P2  | V18 CFG UPGRADES (CPU-tuned) variant | V18 CFG block | (swap 47L → 37L) | pending |
-| P3  | Cell 3 Load Perch TF-only path | Cell 3 | (swap) | pending |
-| P1  | Cell 0 install (TF 2.20 only, no ONNXRuntime) | Cell 0 | (swap) | pending |
+| 1 | **3-gate rank-blend rescue** (fake_only + proto_cont + sed_only) | mtoshidesu 0.947, cliff376 0.941, ulyanov 0.945 (3 of 7 top notebooks) | 2-4h port + sweep | proto_cont gate adds cross-window temporal context that ProtoSSM's 12-window inference structurally lacks; not in kill list |
+| 2 | **Sonotype mirroring** (4 MIRROR_PAIRS, group-max) | mtoshidesu, needless090 — same exact groupings | <1h | LB target collapses sonotypes; two independent convergences = strong social proof |
+| 3 | **Rare-class shrinkage** (Amphibia/Mammalia/Reptilia: val<mean+0.06 → val×0.85) | mtoshidesu only | <1h | Mechanistically aligned with [[feedback_encoder_taxonomy_must_match_lb]] — Aves-trained encoders generate near-noise on non-Aves taxa |
 
-**Explicitly out of scope** (baseline-only edits, not pantanal-added
-content — do not revert):
-- Cell 2 Imports (WORK has +30L over HEAD)
-- Cell 18 postproc (WORK +7L)
-- Residual SSM (WORK +1L)
+**Skipped (low EV):** lambda_prior scalar bumps (v77 L1 failure pattern); two-config dual blend (refinement of #1, gated on it).
 
-**Results log**:
+**Verified absent from production:** grep for `fake_only`, `proto_cont`, `proto_kernel`, `MIRROR_PAIRS`, `rare_classes` in `birdclef2026-protossm-postproc.ipynb` returned zero hits.
 
-| Commit | Candidate | LB | Wall time | Timeout? | Verdict |
-|---|---|---|---|---|---|
-| `b33ec1a7e2` | baseline | 0.931 | (known good) | no | pass |
-| `d0fc7119db` | P10 | 0.916 | n/a | no | **fail** (−0.015) — reverted in `4d78564641` |
-| `1c73f0f989` | P6 | (no push) | n/a | n/a | **pass by inspection** — additive fallback paths only, existing resolver already finds cache on Kaggle so new entries are unreachable; no behavior change expected |
+### Hard lesson from L4-v2 applied to this plan
 
-**Closeout (2026-04-15):** reverse-ablation exhausted without finding a
-score-positive candidate. Byte-for-byte comparison of baseline's "V18 CFG
-UPGRADES" cell vs V19's version confirms that **the V18 architectural
-upgrades (`d_model=320`, `n_ssm_layers=4`, `n_prototypes=2`) are already
-in the LB 0.931 baseline**. Every remaining V19 delta falls into one of:
+The mtoshidesu gate constants (0.55, 0.08, 0.94, 0.78, 0.12, blend 0.05/0.12/0.08) were tuned for **their** upstream SED/ProtoSSM models, not ours. **Copy-paste without OOF re-tuning is the exact L4-v2 failure pattern.** Two non-negotiable safeguards before LB push:
 
-- **no-op plumbing** (P1, P3, P5, P6, P7, P9, P11a) — alternate Kaggle
-  input layouts, `.to(DEVICE)` calls on a CPU-only kernel, ckpt-loader
-  fallbacks that never resolve with baseline metadata
-- **speed-for-score trades** (P2, P11b) — fewer TTA shifts, smaller MLP
-  probe, fewer folds; all intended as timeout mitigations for V19's
-  heavier training budget, not score wins
-- **speed-only wins** (P11c PCEN vectorization) — neutral on LB unless
-  paired with a "spend the saved time" change (more TTA / folds)
-- **confirmed regressions** (P10) — `.to(DEVICE)/.cpu()` in Score Fusion,
-  −0.015 on V22
+1. **Local OOF tuning of gate constants** on matched A1+ProtoSSM substrate before push.
+2. **Multi-config sweep** — at minimum a 3×3 grid on the most-sensitive constants.
 
-Therefore pantanal cannot close the 0.931 → 0.951 leaderboard gap. The
-+0.020 target must come from **Tracks A / B / C / D** in the upper
-sections of this plan (new signal sources, not rearranging the existing
-ProtoSSM stack).
+### Available OOF substrates
+
+- `data/d2_beta_oofs.npz` (April 15, **stale models** — has matched a1_ranks + proto_oof on 708 rows × 234 classes). Substrate is 59 files × 12 windows — different from the LB-correlated 1478-window broader-pool but the only matched-pair OOF we have.
+- `data/a2_a1_5fold_broader_oof.npz` and `data/l4v2_5fold_broader_oof.npz` — 1478 broader-pool rows, A1 SED only, no matched ProtoSSM. Not directly usable for gate-triad tuning.
+
+**Plan:** Re-generate d2_beta_oofs.npz fresh against current-production models via a Kaggle notebook push in MODE=train (~7 min wall, no LB slot, no training). Then sweep gate constants locally on the fresh 708-row OOF substrate. Push best config to LB as v80.
+
+### Step-by-step (highest priority)
+
+1. **Re-gen d2_beta_oofs.npz on current models.** Flip `MODE` from "submit" to "train" in the notebook, push to Kaggle (no LB slot used because train mode doesn't submit). Pull `d2_beta_oofs.npz` from kernel output. Flip MODE back. ~15 min round-trip.
+2. **Implement gate triad in standalone script** `src/postproc_gate_sweep.py` mirroring mtoshidesu cell 34 logic (fake_only + proto_cont + sed_only). Load d2_beta_oofs, compute baseline AUC, compute gated AUC across a small constant grid.
+3. **If material gain (OOF AUC delta > +0.005) is found**, port the chosen constants into the notebook (new cell after A1 rank fusion). Otherwise stop and reconsider whether the gate-triad lever fits this pipeline.
+4. **Layer sonotype mirroring + rare-class shrinkage** as additional cells (cheap, can stack independently).
+5. **Push v80 to LB** with the combined post-gate config.
 
 ---
 
-## 9. Next action after §8 closeout (2026-04-15)
+## 📌 PICK UP HERE — INVALIDATED 2026-05-23 ~23:45 EDT, see §43 (end of file) for current state
 
-**Context:** public LB leader is at **0.951**; our production baseline is
-**0.931**; minimum useful gain per submission is **+0.020**. §8 confirmed
-the pantanal branch cannot deliver this, so the next submission has to
-come from a track that introduces new signal, not one that rearranges
-ProtoSSM/A1/B1 plumbing.
+> _Original §39 handoff (2026-05-23 ~19:30 EDT — L4-v2 closed, postproc-gate lever staged)._
 
-### Chosen next step: resume D2-β Phase 2 S1 stacker LB probe
+### TL;DR — one paragraph
 
-**Why this first** (ahead of Track A SED or Track C pseudo-labels):
+L4-v2 lever closed (v78=0.928, v79=0.926 — both regressed vs v75 0.933). Competitor postproc audit (7 top notebooks) surfaced three novel postproc levers, ranked: (1) 3-gate rank-blend rescue, (2) sonotype mirroring, (3) non-Aves rare-class shrinkage. All postproc, no retraining. Per the L4-v2 lesson, we OOF-tune gate constants locally before any LB push. Production notebook is back at v76 (A2 + rank-mean) state. 9 days left to deadline; 3 LB slots remaining today.
 
-1. **Fully staged already.** Commit `ce2594d496` (2026-04-11) left the
-   repo in a ready-to-push state:
-   - `four_track/src/d2_lgbm_stack.py` has `fit_final_s1()` / `apply_s1()`
-     and the fitted per-class logistic coefs live in
-     `four_track/data/d2_beta_s1_coefs.npz`.
-   - The kernel-side cell `four_track/src/d2_s1_kernel_cell.py` is
-     already injected into the canonical `protossm-postproc` notebook
-     and is a no-op in `MODE="submit"` unless the coef dataset is
-     attached.
-   - `kernel-metadata.json` changes + coef-dataset upload path were
-     documented in §D2-β Phase 2. Only action left is
-     `kaggle kernels push` and measure LB.
-2. **Answers a live gate, not builds a new one.** Phase 1.5 found the
-   708-row local OOF substrate is structurally broken (LB-production
-   rank fusion scored 0.6699 locally vs A1-alone 0.7359). That makes
-   the local S1 lift of +0.1211 **untrustworthy as a local gate**. The
-   only way to learn whether S1 is real is one LB slot. Every day we
-   don't push it, the question stays open.
-3. **Cheap to revert.** If S1 regresses LB, a single commit revert
-   returns us to LB 0.931 baseline. No code is replaced, only one cell
-   added and one dataset attached.
-4. **Unblocks D3.** If S1 passes, per-taxon ensemble weights (D3) become
-   a natural follow-on using the same OOF substrate.
+### Live processes
 
-**Concrete steps for the next session:**
+None. All training quiesced. No background jobs.
 
-1. Re-grep both `four_track/new_plan.md` and `../plan.md` for
-   "must be trained on Kaggle" / DOA / embedding-mismatch hazards per
-   `feedback_regrep_constraints`. Verify the S1 coefs are a *local*
-   post-processing fit over Kaggle-produced OOF scores (they are —
-   fit on `four_track/data/d2_beta_oofs.npz` which came from Kaggle
-   kernel v26), so the hazard doesn't apply; but document the check.
-2. Confirm the `protossm-postproc` canonical notebook on disk matches
-   the submit-mode production state (MODE="submit", D2-β OOF-dump cell
-   present as no-op, S1 cell present as no-op without coefs dataset).
-3. Upload `four_track/data/d2_beta_s1_coefs.npz` to a private dataset
-   `stevewatson999/birdclef-2026-d2b-s1-coefs` and add it to
-   `jupyter/protossm-postproc/kernel-metadata.json:dataset_sources`.
-4. `kaggle kernels push` on `protossm-postproc`; submit to LB.
-5. Record outcome in the D2-β Phase 2 section and in the top-of-file
-   LB submission history.
+### Next actions in order
 
-**Decision gate on the result:**
+1. Re-generate fresh d2_beta_oofs.npz (Kaggle MODE=train push, no LB cost). ~15 min round-trip.
+2. Implement `src/postproc_gate_sweep.py` (mirror mtoshidesu cell 34 logic, sweep small constant grid).
+3. Decide gate-triad fate based on local OOF AUC delta vs baseline; sonotype + non-Aves stacking is cheap regardless.
+4. v80 LB push with tuned config if local OOF shows ≥ +0.005 gain.
 
-| LB outcome | Verdict | Next step |
-|---|---|---|
-| ≥ 0.951 | 🎉 single-slot close of the gap | lock S1 in production, resume other tracks for further gain |
-| 0.951 > LB > 0.933 | partial win | keep S1, proceed to D3 (per-taxon weights) for the rest of +0.020 |
-| 0.931 ≤ LB ≤ 0.933 | neutral | revert S1, conclude D2-β exhausted, pivot to Track A SED |
-| < 0.931 | regression | revert S1 + document, pivot to Track A SED |
+### Production state
 
-**If S1 is neutral/regressive**, the follow-on is **Track A (SED on
-raw audio)**, not Track C. Rationale:
+- LB high: **v75 0.933** (A2 + rank-mean)
+- Notebook: reverted to bak_pre_v78_l4v2 baseline
+- L4-v2 ckpts + Kaggle dataset preserved (forensic-only; not in production)
 
-- Track A introduces a fundamentally new signal path (mel-spectrogram
-  CNN/SED on raw audio, independent of Perch embeddings) — the class
-  of model change that typically moves LB by 0.01–0.03 on BirdCLEF.
-- Track C (pseudo-labels) requires a working student that can consume
-  Kaggle-produced Perch features without the embedding-mismatch trap;
-  C1 has the feature extraction staged (commit `a6ffebdeca`) but C2
-  is still flagged KILLED in §Track C. Reviving it is a bigger design
-  lift than starting Track A.
+### Things NOT to do
 
-**Budget:** the S1 probe consumes one LB submission. Track A takes
-~2–4 days of training work before its first LB slot. Plan for at most
-one submission per LB-probe day until we know whether S1 lands.
+- **Don't push gate-triad constants from mtoshidesu without local OOF tuning** — same failure pattern as L4-v2.
+- **Don't burn slots on lambda_prior / rank_aware_power scalar bumps** — Nina EoS-6 reports +0/+0.001 gains, below ±0.005 LB SE.
+- **Don't propose another "more bird audio" pretrain** ([[project_xc_pretrain_lever_exhausted]]) or another cross-arch fold ([[project_cross_arch_ceiling]]).
 
 ---
 
-## 10. Pre-trained ProtoSSM/B1 checkpoints (side-project, 2026-04-15)
+## §40 — v80 sonotype + non-Aves shrinkage CLOSEOUT (2026-05-23 ~20:00 EDT)
 
-**Problem:** ProtoSSM and B1 PerceiverIO train from scratch every
-submission inside the 90-min Kaggle CPU budget. This caps them at
-~30 epochs / small model / no hyperparameter sweeps. The 0.931 → 0.951
-gap likely requires more model capacity or training than the budget
-allows.
+**BOTH LEVERS CLOSED at LB Δ=0.000.**
 
-**Key discovery:** `jaejohn/perch-meta` is a Kaggle dataset containing
-Perch v2 embeddings+logits for all 59 train_soundscape files (708 rows),
-extracted *on Kaggle* on 2026-03-13. The production notebook already
-loads these for training (Cell 6 `resolve_full_cache_paths`). Verified
-2026-04-15 that the local cache (`data/processed/perch_cache/`) does
-NOT match — max embedding diff = 0.118, confirming the local-vs-Kaggle
-mismatch is real and the `jaejohn/perch-meta` copy is the authoritative
-Kaggle-extracted version.
+| Kaggle ver | Config | LB | Δ vs v75 |
+|---|---|---:|---:|
+| v75 (anchor) | A2 + rank-mean (current production) | **0.933** | — |
+| v80 | v75 + sonotype mirror + non-Aves shrinkage | **0.933** | **0.000** |
 
-**Implication:** we can train ProtoSSM and B1 *locally* on the
-Kaggle-extracted features with no time limit, upload the checkpoints,
-and load them in the submission notebook — skipping in-kernel training
-entirely. This sidesteps the 90-min bottleneck without hitting the
-embedding-mismatch wall (because the training features *are* Kaggle
-features, just downloaded).
+The two postproc tricks from mtoshidesu 0.947 reproducer + needless090 0.934 — sonotype mirroring on 4 MIRROR_PAIRS (10 affected columns) and non-Aves rare-class shrinkage on 44 columns (35 Amphibia + 8 Mammalia + 1 Reptilia) — landed at LB 0.933, identical to v75 baseline. Neither helped nor hurt. Memory: [[project_sonotype_shrinkage_neutral]].
 
-**This is a side-project**: it does not modify the current production
-pipeline until Step 5. Steps 1–4 are purely additive.
+**Two of three §39 levers now confirmed exhausted standalone.** Only the gate triad remains untested live. Notebook reverted to v75 baseline.
 
-### Steps
+**Slot count today: 3/5 used (v78, v79, v80). 2 remaining.**
 
-**Step 1 — Local training script** (`four_track/src/train_protossm_local.py`)
-- Loads features from the downloaded `jaejohn/perch-meta` dataset
-  (copied to `four_track/data/kaggle_perch_cache/`)
-- Loads labels from `train_soundscapes_labels.csv` via the competition
-  data directory
-- Replicates the exact ProtoSSM v5 architecture from the notebook
-  (Cell 22/24) — same `d_model`, `d_state`, `n_ssm_layers`, etc.
-- Trains with full freedom: 200+ epochs, LR sweep, multi-seed,
-  optionally larger `d_model` / more layers
-- GroupKFold OOF on the same 8-site split the notebook uses
-- Saves best checkpoint as `protossm_pretrained.pt`
-- Estimated local runtime: minutes (708 rows is tiny)
+### What's left
 
-**Step 2 — Local B1 training** (same script or
-`four_track/src/train_b1_local.py`)
-- Same feature source, same labels, same GroupKFold
-- Replicates PerceiverIO architecture from Cell 24b
-- Saves `b1_pretrained.pt`
+| Lever | Status | Cost | Risk |
+|---|---|---|---|
+| Gate triad with proper OOF tuning | UNTESTED | 4-6h engineering (extract post-postproc ProtoSSM OOF) + sweep + 1 LB slot | medium — OOF→LB transfer may still fail like L4-v2 |
+| Gate triad with mtoshidesu defaults, blind push | UNTESTED | 30 min + 1 LB slot | high — L4-v2 anti-pattern |
+| Accept v75 0.933 as final | — | 0 | 0 |
 
-**Step 3 — Upload checkpoints**
-- `kaggle datasets create` → `stevewatson999/birdclef-2026-pretrained-ckpts`
-- Contains `protossm_pretrained.pt` + `b1_pretrained.pt`
-- Add to `kernel-metadata.json:dataset_sources`
+### Updated decision point
 
-**Step 4 — Guarded load path in notebook**
-- Cell 24 (ProtoSSM training): wrap in
-  `if ckpt.exists(): model.load_state_dict(...) else: <current training>`
-- Cell 31b (B1 training): same pattern (P9 in §8 already had this for
-  B1 — reuse the structure but point at the new dataset)
-- Without the checkpoint dataset attached, notebook behaves identically
-  to today
+The day's data: three competitor-notebook ports → one regression, one regression, one neutral. The growing case is that our pipeline's tunable parameters don't compose cleanly with mtoshidesu-style postproc tricks; the +0.014 gap may live in upstream model differences (SED training recipe, ProtoSSM training, OOF-tuned per-class thresholds tuned on a substrate we don't have) rather than in tunable postproc.
 
-**Step 5 — LB probe**
-- `kaggle kernels push` with checkpoint dataset attached
-- Compare LB vs 0.931 baseline
-- If regression: detach dataset → instant revert to current behavior
+The gate triad is the one remaining unmoved stone. Whether it's worth the 4-6h engineering investment depends on prior on the +0.014 gap actually being closable from our position — and three failures today shifted that prior down.
 
-### What this unlocks
+---
 
-| Parameter | Current (in-kernel) | With pre-trained ckpts |
-|---|---|---|
-| ProtoSSM epochs | 30 (submit caps) | 200+ |
-| ProtoSSM d_model | 320 (time-limited) | 512+ if data supports it |
-| B1 epochs | ~20 | 100+ |
-| Hyperparameter sweeps | impossible (1 config/submission) | unlimited local |
-| Multi-seed ensembling | impossible | average N seeds |
-| Freed Kaggle wall time | 0 | ~25 min → more TTA / A1 folds |
+## §41 — v81 Gate 3 CLOSEOUT + §39 lever closeout (2026-05-23 ~22:25 EDT)
 
-### Risks
+**ALL §39 LEVERS NOW EXHAUSTED LIVE.**
 
-1. **Feature staleness**: if Kaggle updates TF/ONNX runtime, the
-   `jaejohn/perch-meta` features may drift from live-extracted test
-   features. Mitigation: re-run extraction kernel (~30 min). Low
-   frequency risk — Kaggle env changes are rare mid-competition.
-2. **Overfitting on 708 rows**: more epochs + bigger model on tiny data
-   could overfit. Mitigation: OOF monitoring + early stopping + SWA.
-   The notebook already has these; the local script replicates them.
-3. **Architecture drift**: if the local script's model definition
-   diverges from the notebook's, `load_state_dict` will fail with a
-   key mismatch. Mitigation: import the model class from a shared
-   source file used by both notebook cell and local script.
+| Kaggle ver | Config | LB | Δ vs v75 |
+|---|---|---:|---:|
+| v75 (anchor) | A2 + rank-mean | **0.933** | — |
+| v78 | L4-v2 + sig-mean | 0.928 | −0.005 |
+| v79 | L4-v2 + rank-mean | 0.926 | −0.007 |
+| v80 | v75 + sonotype + non-Aves shrink | 0.933 | 0.000 |
+| **v81** | **v75 + Gate 3 only (mtoshidesu defaults)** | **0.930** | **−0.003** |
 
-### Interaction with other tracks
+Gate-3 isolation OOF probe (post-postproc-proto matched 708-row substrate) had cleanly identified Gate 3 as the only gate of the three that moved AUC (+0.0047, with Gates 1 + 2 contributing ±0.0001). LB outcome: −0.003 regression. Memory: [[project_gate3_only_lb_regressed]].
 
-- **D2-β S1 probe** (§9, v46 running now): independent. S1 is a
-  post-processing layer over rank-fused outputs; pre-trained ckpts
-  change the model outputs it consumes but don't conflict.
-- **Track A SED**: independent — A1 operates on raw mel spectrograms.
-- **Track C**: if pre-trained ProtoSSM is better, C's pseudo-label
-  teacher is also better. Complementary.
+**Now twice-confirmed:** the matched 708-row OOF substrate cannot predict LB for ANY change to the SED-vs-ProtoSSM rank balance. The substrate omits the residual-SSM correction (cell ~3411) and the Perch CV-blend, which shift the relative score scales in production beyond what the OOF simulates. L4-v2 (+0.091 OOF → −0.005 LB) + Gate 3 (+0.005 OOF → −0.003 LB) are the two data points.
 
+**Slot budget today: 4/5 used. 1 slot remaining (resets at midnight UTC).**
+
+### What's actually left
+
+| Lever | Status | Est. cost | Likely LB delta |
+|---|---|---|---|
+| Build full-pipeline OOF (all 4 branches + final blend) on broader-pool | UNTESTED | 1-2 days engineering | Unknown — would enable proper gate-triad and other postproc tuning |
+| Full mtoshidesu gate triad (defaults) — blind push without OOF | UNTESTED | 30 min | Probably neutral or regression (Gate 3 alone already regressed) |
+| Accept v75 0.933 as final | — | 0 | 0 |
+| Try Gate 2 (proto_cont) alone with tuned constants | UNTESTED | 1h + 1 slot | Unknown — but our OOF says it does nothing; LB transfer may differ |
+
+### Decision point
+
+10 days left. 5 fresh slots/day available going forward. The §39 audit's 5 levers are now closed (all failed or neutral). Building a full-pipeline OOF substrate is the only path to systematic improvement, and it's 1-2 days of engineering for unknown gain.
+
+The right call from here may genuinely be **accept v75 0.933 final**, write up the closeout, and stop. Two days, ~9 slots burned, zero LB gain — and the OOF substrate problem isn't going away without significant engineering investment.
+
+---
+
+## §42 — MTOSHIDESU CLONE LB 0.944 — gap closed (2026-05-23 ~23:30 EDT)
+
+**Pivot worked.** Pushed mtoshidesu's full 0.947 pipeline notebook verbatim to a new private kernel under our credentials. **LB = 0.944** in one slot. +0.011 vs v75 0.933; within ±0.005 of mtoshidesu's claimed 0.947.
+
+**Kernel:** `stevewatson999/bc2026-mtoshidesu-clone-test` v1 (private)
+**Source:** `mtoshidesu/birdclef-2026-0-947-lb-public-pipeline-reproduced` (public)
+**Dataset sources (all public):**
+- `tuckerarrants/bc2026-distilled-sed-public`
+- `tuckerarrants/perch-v2-no-dft-onnx`
+- `rishikeshjani/perch-onnx-for-birdclef-2026`
+- `jaejohn/perch-meta`
+
+| | LB |
+|---|---:|
+| v75 (our best before tonight) | 0.933 |
+| v81 (Gate 3 piecewise port — regressed) | 0.930 |
+| v80 (sonotype + non-Aves piecewise) | 0.933 |
+| v78/v79 (L4-v2 piecewise) | 0.928 / 0.926 |
+| **clone v1 (full mtoshidesu verbatim)** | **0.944** |
+| mtoshidesu's claimed | 0.947 |
+
+**Why this worked when piecewise ports failed:** mtoshidesu's gate triad / per-class thresholds / sonotype groupings were all tuned for THEIR specific upstream models (SED ckpts, ProtoSSM, ensemble blend). Porting one technique onto OUR pipeline applied tuned constants to a different score distribution, breaking the calibration. The techniques weren't wrong; they were calibrated for a pipeline that wasn't ours. Memory: [[project_mtoshidesu_clone_reproduced_944]].
+
+### Slot budget update
+
+Today: 5/5 used (v78, v79, v80, v81, clone). Tomorrow's 5 reset at midnight UTC.
+
+### Current best LB: 0.944 (clone v1)
+
+### Tomorrow's open questions
+
+1. **Can we ensemble our v75 (0.933) with the clone (0.944) for > 0.944?**
+   If our predictions and theirs are decorrelated per-row, a rank-mean ensemble could exceed both. Worth testing once tomorrow (one slot). Expected gain: small, but the floor is "lose nothing" since 0.944 is the safety net.
+
+2. **Can we further improve the clone by porting our better A1 SED ckpts?**
+   They use tuckerarrants distilled-SED (a public dataset). Our A2 SED ckpts might be stronger or weaker; an isolated swap (their pipeline minus their SED, plus our A2) tests this. Higher risk than #1.
+
+3. **Multiple final-submission selection rule.** Kaggle lets you pick 2 submissions for private LB evaluation. The clone 0.944 is one. The second slot should be either our v75 0.933 (diverse pipeline → hedge against private LB shifts) or a hopefully-better ensemble.
+
+### Decision tree for tomorrow
+
+```
+DEFAULT: clone v1 (LB 0.944) is the locked floor.
+
+IF you want to gamble for higher:
+  - Push 1 ensemble (clone + v75 rank-mean) → if > 0.944, becomes new floor
+  - Stop after ≤2 more slots; diminishing returns
+
+IF you want to hedge:
+  - Final submission selection: clone v1 + v75 (architecture diversity)
+
+IF you want to stop:
+  - Mark clone v1 as final selection. Done. 0.944 is the result.
+```
+
+---
+
+## 📌 PICK UP HERE (2026-05-23 ~23:45 EDT — clone v1 LB 0.944 locked; five paths staged for tomorrow)
+
+> **All prior PICK UP HERE sections invalidated** (§37 and §39 era). This is the single current handoff.
+
+### TL;DR
+
+Two days, 9 piecewise lever ports, zero gain. Tonight's pivot: pushed mtoshidesu's full 0.947-LB notebook verbatim under our credentials → **LB 0.944** (+0.011 vs v75 0.933). Kernel `stevewatson999/bc2026-mtoshidesu-clone-test` v1 is the new floor and one of the two final-submission picks. Daily slots: 5/5 used today; resets at midnight UTC. Competition deadline 2026-06-03 (10 days).
+
+### Current best LB: **0.944** (clone v1)
+
+### Five strategies, ranked by EV for closing the remaining ~0.003-0.019 gap to top of LB
+
+| # | Strategy | Cost | Expected Δ over 0.944 | Notes |
+|---|---|---|---:|---|
+| 1 | **Clone ⊕ v75 rank-mean ensemble** | 1h dev + 1 slot | +0.002 to +0.005 | Different pipelines = decorrelated rows → ensemble lift. Floor stays 0.944 (clone as 2nd pick). LOW RISK. |
+| 2 | **Clone nina2025 EoS-6** (271 votes, claims 0.948+) | 1h dev + 1 slot | +0.004 to +0.008 if it lands at claim | New higher floor if it works. Risk: claim may not reproduce. |
+| 3 | **Multi-clone ensemble** (mtoshidesu + nina + ulyanov) | 1 day; 3 base slots + 1 ensemble slot = 4 slots | +0.005 to +0.010 | Three independent pipelines decorrelate more than two. Highest ceiling, highest compute cost. |
+| 4 | **Investigate the 0.003 gap to mtoshidesu's claimed 0.947** | 30 min, **NO SLOT** | up to +0.003 | Free. Check kernel log / dataset versions / kernel resource caps. Probably LB noise but cheap to rule out. |
+| 5 | **Replace clone's SED branch with our A2 SED** | 1-2h + 1 slot | unknown, possibly negative | Same calibration failure mode as today's Gate-3 (−0.003). NOT RECOMMENDED unless other paths exhaust. |
+
+### Recommended sequence for tomorrow
+
+1. **Step 1 (30 min, no slot):** Path 4 — investigate why our clone scored 0.944 vs mtoshidesu's claimed 0.947. Check `/tmp/kernel_v1_clone/birdclef-2026-0-947-lb-public-pipeline-reproduced.log` for kernel timing, resource pressure, dataset version IDs. Compare against mtoshidesu's reported kernel state.
+
+2. **Step 2 (1.5h, 1 slot):** Path 1 — build local rank-mean ensemble of our v75 submission.csv + clone v1 submission.csv. Push as a new kernel `bc2026-clone-x-v75-ensemble`. Both source submissions are already saved in our Kaggle outputs. ETA: 7-min kernel + 45-min LB wait.
+
+3. **Step 3 (3h, 1 slot, gated on #2):** Path 2 — clone nina2025 EoS-6 verbatim as a new kernel. Same recipe as the mtoshidesu clone. If LB > 0.944, becomes new floor.
+
+4. **Step 4 (only if #2 + #3 plateau):** Path 3 — clone ulyanov's gate-fake008-head0015 (336 votes, claims 0.945), then ensemble the three clones. Per-row rank-blend. Most compute-intensive but highest ceiling.
+
+5. **SKIP** Path 5 unless steps 1-4 exhaust without progress.
+
+### Final-submission selection rule (Kaggle picks 2 for private LB)
+
+- **Pick A:** Best public LB single entry (currently clone v1 0.944; updated to best ensemble if #2-4 exceed)
+- **Pick B:** Architecture-diversity hedge (currently v75 0.933) — protects against public→private LB shifts
+
+Don't burn all slots chasing public LB; keep the v75 hedge in reserve as final pick.
+
+### What's gated / NOT to do tomorrow
+
+- **Don't try another piecewise lever port onto OUR pipeline.** Today's 9 slots proved this fails. Memory: [[project_l4v2_lb_regression]], [[project_gate3_only_lb_regressed]], [[project_sonotype_shrinkage_neutral]].
+- **Don't burn slots on lambda_prior / rank_aware_power scalar tweaks** ([[project_v77_l1_correction_weight_neutral]] failure mode).
+- **Don't propose new training runs.** Bird-audio pretrain ([[project_xc_pretrain_lever_exhausted]]), cross-arch ([[project_cross_arch_ceiling]]), multi-seed bagging ([[project_multiseed_bagging_exhausted]]) all exhausted.
+- **Don't trust local OOF substrate for tuning gates / blend constants.** Twice-confirmed: matched 708-row OOF can't predict LB for A1-vs-ProtoSSM blend changes ([[project_gate3_only_lb_regressed]]).
+
+### The meta-question to sit with overnight
+
+How much do you actually care about climbing past 0.944 vs banking +0.011 and stopping? If "I want 0.950+", do steps 1-3-4. If "+0.011 is enough", just confirm the clone as Pick A tomorrow morning and pick v75 as Pick B for hedging — that's a 5-minute morning.
+
+### Slot accounting
+
+- Today (2026-05-23): 5/5 used (v78, v79, v80, v81, clone v1)
+- Tomorrow (2026-05-24): 5 fresh slots at 00:00 UTC (= 20:00 EDT today, so tomorrow morning will have full budget)
+- Days to deadline: 10 (≤50 LB slots remaining)
+- Steps 1-4 above use ≤4 slots if executed in order
+
+### Reference: artifacts created today
+
+- `data/matched_oof_v75.npz` (raw sigmoid proto)
+- `data/matched_oof_v75_postproc.npz` (post-postproc proto)
+- `data/per_class_thresholds.npz` (extracted from notebook)
+- `data/a2_jit/a1_fold{0..4}.pt` (production A2 JIT'd ckpts, downloaded from Kaggle)
+- `kaggle_datasets/a1-effb0-l4v2-ckpts/` (the L4-v2 JIT'd ckpts — keep for forensic)
+- `kaggle.com/datasets/stevewatson999/birdclef-2026-a1-effb0-l4v2-ckpts` (uploaded)
+- `kaggle.com/code/stevewatson999/bc2026-mtoshidesu-clone-test` v1 (LB 0.944 — the new floor)
+- `src/postproc_gate_sweep.py`, `src/build_matched_oof.py`, `src/build_postproc_matched_oof.py`
+- `jupyter/mtoshidesu-clone-test/` (kernel staging for the clone)
+
+### Memory entries added today (for cross-reference)
+
+- `project_l4v2_lb_regression` — L4-v2 +0.091 OOF → −0.005 LB; ckpt-trained-on-ProtoSSM-pseudo introduces inter-branch correlation collapse
+- `project_sonotype_shrinkage_neutral` — v80 added sonotype + non-Aves shrinkage, LB Δ=0
+- `project_gate3_only_lb_regressed` — v81 +0.005 OOF → −0.003 LB; matched OOF substrate twice-confirmed unreliable for A1-vs-ProtoSSM blend tuning
+- `project_mtoshidesu_clone_reproduced_944` — clone gave +0.011 in one slot; meta-lesson on testing the right UNIT

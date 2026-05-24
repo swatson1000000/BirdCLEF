@@ -10,12 +10,12 @@ version control means we can iterate without hand-editing the notebook.
   1. Asserts the three shared-substrate variables produced by cell 31b
      (`oof_proto_flat`, `oof_b1_flat`, `y_flat`, `file_groups`) exist
      and have the expected shapes.
-  2. Loads the A1 4-fold JIT checkpoints and runs streaming inference on
+  2. Loads the A1 5-fold JIT checkpoints and runs streaming inference on
      the **same 59 fully-labeled train_soundscapes files** that B1 and
      ProtoSSM OOF'd on (`full_paths` from cell 16). One-time ~3-5 minute
      cost. Produces `_a1_fold_sigmoids_oof` of shape
-     `(4, n_files * N_WINDOWS, N_CLASSES)`.
-  3. Rank-averages A1 across its 4 folds per class to mirror what the
+     `(5, n_files * N_WINDOWS, N_CLASSES)`.
+  3. Rank-averages A1 across its 5 folds per class to mirror what the
      submit-path A1 cell (cell 37) does, producing `a1_ranks_oof` of
      shape `(n_files * N_WINDOWS, N_CLASSES) = (708, 234)` on the
      default 59-file labeled pool.
@@ -27,7 +27,7 @@ version control means we can iterate without hand-editing the notebook.
        - `file_groups`    (n_files,) int     — GroupKFold group IDs (per-file)
        - `fold_ids`       (708,)     int     — 12-tiled repeat of file_groups
        - `n_windows`      scalar int         — N_WINDOWS (12)
-       - `a1_folds`       (4,)       int     — [0,1,2,4] (fold 3 intentionally excluded)
+       - `a1_folds`       (5,)       int     — [0,1,2,3,4] (v4 5-fold bundle 2026-05-12)
        - `notebook_sha`   str                — short git sha at dump time (best-effort)
 
 In submit mode this cell is a no-op except for a short log line — it's
@@ -50,6 +50,7 @@ safe to leave injected and the LB notebook continues to work normally.
     a1_fold0.pt
     a1_fold1.pt
     a1_fold2.pt
+    a1_fold3.pt
     a1_fold4.pt
 
   Already in `kernel-metadata.json:dataset_sources` from the A1 cell
@@ -123,7 +124,7 @@ else:
     #        is no local-vs-Kaggle embedding mismatch to worry about. ---
 
     _D2B_A1_CKPT_DIR = Path("/kaggle/input/birdclef-2026-a1-effb0-ckpts")
-    _D2B_A1_FOLDS    = [0, 1, 2, 4]
+    _D2B_A1_FOLDS    = [0, 1, 2, 3, 4]
     _D2B_A1_N_MELS   = 224
     _D2B_A1_N_FFT    = 4096
     _D2B_A1_HOP      = 1252

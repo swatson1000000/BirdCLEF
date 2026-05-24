@@ -1,0 +1,24 @@
+{
+  "id": "stevewatson999/birdclef-2026-perch-train-soundscapes-extract-p0",
+  "title": "BirdCLEF 2026 Perch train_soundscapes Extract p0",
+  "code_file": "birdclef2026-perch-train-soundscapes-extract.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "jaejohn/perch-meta",
+    "stevewatson999/birdclef-2026-perch-onnx"
+  ],
+  "competition_sources": [
+    "birdclef-2026"
+  ],
+  "kernel_sources": [
+    "ashok205/tf-wheels"
+  ],
+  "model_sources": [
+    "google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1"
+  ]
+}

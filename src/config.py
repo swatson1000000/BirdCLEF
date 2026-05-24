@@ -1,5 +1,6 @@
 """Central configuration for BirdCLEF+ 2026."""
 
+import os
 import warnings
 from functools import lru_cache
 from pathlib import Path
@@ -19,7 +20,10 @@ warnings.filterwarnings(
 )
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-ROOT   = Path("/home/swatson/work/MachineLearning/kaggle/BirdCLEF")
+# ROOT resolves to the BirdCLEF git root from this file's location by default,
+# making the project portable across machines (spark, deepthought, etc.).
+# Override with BIRDCLEF_ROOT env var if a non-standard layout is needed.
+ROOT   = Path(os.environ.get("BIRDCLEF_ROOT") or Path(__file__).resolve().parent.parent)
 RAW    = ROOT / "data" / "raw"
 PROC   = ROOT / "data" / "processed"
 MODELS = ROOT / "models"

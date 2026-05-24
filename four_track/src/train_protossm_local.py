@@ -8,7 +8,7 @@ cap doesn't allow.
 
 Usage:
     source ~/miniconda3/etc/profile.d/conda.sh && conda activate kaggle
-    cd /home/swatson/work/MachineLearning/kaggle/BirdCLEF/four_track
+    cd /home/swatson/work/kaggle/BirdCLEF/four_track
     python -u src/train_protossm_local.py [--epochs 200] [--seeds 3] [--d-model 320]
 """
 
@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import GroupKFold, KFold
 
 # ── Paths ──────────────────────────────────────────────────────────────
 PROJECT = Path(__file__).resolve().parent.parent          # four_track/
@@ -556,6 +556,22 @@ def main():
     parser.add_argument("--oof-splits", type=int, default=5)
     parser.add_argument("--tta-shifts", type=int, nargs="+", default=[0, 1, -1])
     parser.add_argument("--no-oof", action="store_true")
+    parser.add_argument(
+        "--cv-mode",
+        choices=("site", "file"),
+        default="site",
+        help="OOF split mode: 'site' = GroupKFold by recording site (default, "
+             "OOD-style); 'file' = random file-level KFold (within-pool, "
+             "measures teacher-strength rather than cross-site generalization).",
+    )
+    parser.add_argument(
+        "--save-oof-path",
+        type=str,
+        default=None,
+        help="If set, save per-seed OOF logits + meta to this NPZ path. "
+             "Keys: oof_per_seed (S,F,T,C), oof_mean (F,T,C), file_list, "
+             "labels (F,T,C), per_seed_auc (S,), site_ids (F,), hour_ids (F,)",
+    )
     args = parser.parse_args()
 
     data = load_data()
@@ -599,15 +615,26 @@ def main():
         print("=" * 60)
 
         n_splits = args.oof_splits
-        n_unique_groups = len(set(data["file_groups"]))
-        if n_unique_groups < n_splits:
-            print(f"  WARNING: {n_unique_groups} groups < {n_splits} splits, reducing")
-            n_splits = n_unique_groups
-
-        gkf = GroupKFold(n_splits=n_splits)
-        dummy_y = np.zeros(len(data["emb_files"]))
+        n_files = len(data["emb_files"])
+        if args.cv_mode == "site":
+            n_unique_groups = len(set(data["file_groups"]))
+            if n_unique_groups < n_splits:
+                print(f"  WARNING: {n_unique_groups} groups < {n_splits} splits, reducing")
+                n_splits = n_unique_groups
+            gkf = GroupKFold(n_splits=n_splits)
+            print(f"  CV mode: site-grouped GroupKFold (n_splits={n_splits})")
+        else:
+            # File-level shuffle KFold — measures within-pool teacher strength
+            # rather than cross-site generalization.
+            if n_files < n_splits:
+                print(f"  WARNING: {n_files} files < {n_splits} splits, reducing")
+                n_splits = n_files
+            gkf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+            print(f"  CV mode: file-level shuffle KFold (n_splits={n_splits})")
+        dummy_y = np.zeros(n_files)
 
         all_seed_aucs = []
+        all_oof_preds = []  # accumulate per-seed OOF logits
         for seed in range(args.seeds):
             print(f"\n--- Seed {seed} ---")
             torch.manual_seed(seed)
@@ -616,9 +643,11 @@ def main():
             n_files = len(data["emb_files"])
             oof_preds = np.zeros((n_files, N_WINDOWS, N_CLASSES), dtype=np.float32)
 
-            for fold_i, (train_idx, val_idx) in enumerate(
-                gkf.split(dummy_y, dummy_y, data["file_groups"])
-            ):
+            if args.cv_mode == "site":
+                splits = gkf.split(dummy_y, dummy_y, data["file_groups"])
+            else:
+                splits = gkf.split(dummy_y)
+            for fold_i, (train_idx, val_idx) in enumerate(splits):
                 print(f"\n  Fold {fold_i+1}/{n_splits} "
                       f"(train={len(train_idx)}, val={len(val_idx)})")
                 t0 = time.time()
@@ -687,6 +716,7 @@ def main():
             y_flat = data["labels_files"].reshape(-1, N_CLASSES).astype(np.float32)
             seed_auc = macro_auc_skip_empty(y_flat, oof_flat)
             all_seed_aucs.append(seed_auc)
+            all_oof_preds.append(oof_preds.copy())
             print(f"\n  Seed {seed} OOF macro AUC: {seed_auc:.4f}")
 
         print(f"\n{'='*60}")
@@ -694,6 +724,28 @@ def main():
               f"std={np.std(all_seed_aucs):.4f} "
               f"seeds={all_seed_aucs}")
         print(f"{'='*60}")
+
+        if args.save_oof_path is not None:
+            oof_per_seed = np.stack(all_oof_preds, axis=0)  # (S, F, T, C)
+            oof_mean = oof_per_seed.mean(axis=0)            # (F, T, C) — mean of logits
+            out_path = Path(args.save_oof_path)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            # Get the file_list as it was during cross-val (same order as
+            # data["emb_files"] / labels_files)
+            arr = np.load(PERCH_CACHE / "full_perch_arrays.npz")
+            meta_full = pd.read_parquet(PERCH_CACHE / "full_perch_meta.parquet")
+            _, file_list = reshape_to_files(arr["emb_full"].astype(np.float32), meta_full)
+            np.savez_compressed(
+                out_path,
+                oof_per_seed=oof_per_seed.astype(np.float32),
+                oof_mean=oof_mean.astype(np.float32),
+                file_list=np.array(file_list),
+                labels=data["labels_files"].astype(np.float32),
+                per_seed_auc=np.array(all_seed_aucs, dtype=np.float32),
+                site_ids=data["site_ids_all"].astype(np.int32),
+                hour_ids=data["hours_all"].astype(np.int32),
+            )
+            print(f"[save-oof] wrote {out_path}  oof_per_seed={oof_per_seed.shape}")
 
     # ── Train final model (multi-seed average) ────────────────────────
     print(f"\n{'='*60}")

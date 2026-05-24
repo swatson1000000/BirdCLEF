@@ -71,3 +71,37 @@ submission.csv
 .DS_Store
 Thumbs.db
 #plan.md#
+
+# Large untracked data trees (added 2026-05-23 for BirdCLEF_0.944 tag)
+/data/external/
+/data/raw/birdclef_2025/
+/data/raw/birdclef_2026/
+/data/processed/perch_cache/
+/data/kaggle_perch_cache/
+/Noisy_Classmates/
+/birdnet_v2/
+
+# Editor/IDE
+/four_track/.claude/
+*.bak
+*.bak_*
+
+# Local OOF / cache artifacts (regeneratable)
+/four_track/data/*.npz
+/four_track/data/*.json
+/four_track/data/a2_jit/
+/four_track/data/kaggle_perch_cache/
+/four_track/data/external/
+/four_track/data/processed/
+/four_track/data/probe_*.csv
+/four_track/data/probe_*.pt
+/four_track/data/d2_*.txt
+
+# Kaggle dataset staging (uploaded to Kaggle separately)
+/four_track/kaggle_datasets/
+
+# More: model checkpoints + remaining data binaries
+/four_track/models/
+/four_track/data/*.pkl
+/four_track/data/*.txt
+/four_track/wandb/

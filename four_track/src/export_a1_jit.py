@@ -11,6 +11,7 @@ Outputs land in `four_track/kaggle_datasets/a1-effb0-ckpts/` ready for
 `kaggle datasets create`.
 """
 
+import argparse
 import shutil
 import sys
 from pathlib import Path
@@ -33,8 +34,20 @@ from model_a1 import BirdSEDModelA1  # noqa: E402
 KEEP_FOLDS = [0, 1, 2, 4]
 
 CKPT_DIR = FT_ROOT / "models" / "a1"
-OUT_DIR  = FT_ROOT / "kaggle_datasets" / "a1-effb0-ckpts"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Backbone → kaggle_datasets/ subdir suffix + dataset-metadata title/id.
+BACKBONE_VARIANTS = {
+    "tf_efficientnet_b0.ns_jft_in1k": {
+        "suffix": "effb0",
+        "title":  "BirdCLEF 2026 — A1 EffNet-B0 SED 4-fold ensemble",
+        "id":     "stevewatson999/birdclef-2026-a1-effb0-ckpts",
+    },
+    "tf_efficientnetv2_s.in21k_ft_in1k": {
+        "suffix": "effv2s",
+        "title":  "BirdCLEF 2026 — A1 EffNetV2-S SED 4-fold ensemble",
+        "id":     "stevewatson999/birdclef-2026-a1-effv2s-ckpts",
+    },
+}
 
 
 class A1Wrapper(torch.nn.Module):
@@ -52,13 +65,14 @@ class A1Wrapper(torch.nn.Module):
         return self.inner(x)["clip_logits"]
 
 
-def export_one(fold: int) -> Path:
-    src = CKPT_DIR / f"a1_{config.BACKBONE}_fold{fold}_seed42_hybrid.pt"
+def export_one(fold: int, backbone: str, out_dir: Path,
+               loss_suffix: str = "hybrid", seed: int = 42) -> Path:
+    src = CKPT_DIR / f"a1_{backbone}_fold{fold}_seed{seed}_{loss_suffix}.pt"
     if not src.exists():
         sys.exit(f"missing checkpoint: {src}")
 
     model = BirdSEDModelA1(
-        backbone_name=config.BACKBONE,
+        backbone_name=backbone,
         mixstyle_p=0.0,           # disable so trace produces a no-op hook path
     )
     state = torch.load(src, map_location="cpu")
@@ -79,19 +93,19 @@ def export_one(fold: int) -> Path:
     out = traced(example)
     assert out.shape == (1, config.N_CLASSES), f"unexpected output shape {out.shape}"
 
-    out_path = OUT_DIR / f"a1_fold{fold}.pt"
+    out_path = out_dir / f"a1_fold{fold}.pt"
     traced.save(str(out_path))
     print(f"  fold {fold}: traced → {out_path} ({out_path.stat().st_size / 1e6:.1f} MB)",
           flush=True)
     return out_path
 
 
-def write_dataset_metadata() -> None:
-    meta = OUT_DIR / "dataset-metadata.json"
+def write_dataset_metadata(out_dir: Path, title: str, dataset_id: str) -> None:
+    meta = out_dir / "dataset-metadata.json"
     meta.write_text(
         '{\n'
-        '  "title": "BirdCLEF 2026 — A1 EffNet-B0 SED 4-fold ensemble",\n'
-        '  "id": "stevewatson999/birdclef-2026-a1-effb0-ckpts",\n'
+        f'  "title": "{title}",\n'
+        f'  "id": "{dataset_id}",\n'
         '  "licenses": [{"name": "CC0-1.0"}]\n'
         '}\n'
     )
@@ -99,16 +113,51 @@ def write_dataset_metadata() -> None:
 
 
 def main() -> None:
-    print(f"A1 TorchScript export — keep folds {KEEP_FOLDS} (drop fold 3)", flush=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--backbone", type=str, default=config.BACKBONE,
+                        help=f"timm backbone name (default: {config.BACKBONE})")
+    parser.add_argument("--folds", type=int, nargs="+", default=KEEP_FOLDS,
+                        help=f"folds to export (default: {KEEP_FOLDS})")
+    parser.add_argument("--loss-suffix", type=str, default="hybrid",
+                        help="ckpt filename loss suffix (hybrid|asl|bce|ce_l4v2|...)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="seed in source ckpt filename (default: 42)")
+    parser.add_argument("--skip-metadata", action="store_true",
+                        help="don't overwrite dataset-metadata.json")
+    parser.add_argument("--tag", type=str, default="",
+                        help="optional tag suffix (e.g. 'a2') — appended to output "
+                             "dir, dataset id, and title to keep variants separate.")
+    args = parser.parse_args()
+
+    if args.backbone not in BACKBONE_VARIANTS:
+        sys.exit(
+            f"unknown backbone {args.backbone}; "
+            f"add an entry to BACKBONE_VARIANTS"
+        )
+    variant = BACKBONE_VARIANTS[args.backbone]
+    suffix = variant["suffix"]
+    title = variant["title"]
+    dataset_id = variant["id"]
+    if args.tag:
+        suffix = f"{suffix}-{args.tag}"
+        title = f"{title} [{args.tag}]"
+        dataset_id = f"{dataset_id.rsplit('-ckpts', 1)[0]}-{args.tag}-ckpts"
+    out_dir = FT_ROOT / "kaggle_datasets" / f"a1-{suffix}-ckpts"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"A1 TorchScript export — backbone={args.backbone} "
+          f"folds {args.folds} loss={args.loss_suffix}", flush=True)
     print(f"  src dir : {CKPT_DIR}", flush=True)
-    print(f"  out dir : {OUT_DIR}", flush=True)
+    print(f"  out dir : {out_dir}", flush=True)
 
-    for f in KEEP_FOLDS:
-        export_one(f)
+    for f in args.folds:
+        export_one(f, backbone=args.backbone, out_dir=out_dir,
+                   loss_suffix=args.loss_suffix, seed=args.seed)
 
-    write_dataset_metadata()
+    if not args.skip_metadata:
+        write_dataset_metadata(out_dir, title, dataset_id)
     print("\nDone. Next step:", flush=True)
-    print(f"  kaggle datasets create -p {OUT_DIR}", flush=True)
+    print(f"  kaggle datasets create -p {out_dir}", flush=True)
     print("  (or `kaggle datasets version -p {dir} -m 'msg'` if it already exists)",
           flush=True)
 

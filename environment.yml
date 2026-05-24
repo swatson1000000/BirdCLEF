@@ -1,0 +1,60 @@
+name: kaggle
+# BirdCLEF 2026 — canonical pinned env for cross-machine use (spark + deepthought).
+#
+# Build on a new machine:
+#   conda env create -f environment.yml
+#   conda activate kaggle
+#
+# Notes:
+#   - Python 3.11: more stable for the ML stack than 3.13 as of mid-2026.
+#     Spark's existing 'kaggle' env is on 3.13 — that's grandfathered, not
+#     a target for new envs. When spark's env is rebuilt (post L2-redux
+#     download), use this same file.
+#   - torch family pinned to a known-good matched triple. The version-skew
+#     bug on spark today (torchvision 0.25 + torchaudio 2.10 ahead of
+#     torch 2.7.1 → 'operator torchvision::nms does not exist') was caused
+#     by upgrading torchvision/torchaudio without bumping torch. Don't.
+#   - Pip section uses the PyTorch cu128 wheel index. cu128 publishes
+#     both x86_64 wheels (deepthought RTX 4080) AND aarch64 wheels
+#     (spark GB10) for the torch family. cu126 has no aarch64 build,
+#     which silently fell back to CPU on spark and motivated this swap
+#     (2026-05-04, see new_plan.md §14.21 Phase 5.0).
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - pip
+
+  # --- numerical + data stack ---
+  - numpy=1.26.*
+  - pandas=2.2.*
+  - scipy=1.13.*
+  - scikit-learn=1.5.*
+  - pyarrow=17.*
+  - lightgbm=4.5.*
+
+  # --- audio I/O ---
+  - libsndfile
+  - ffmpeg
+
+  # --- utilities ---
+  - tqdm
+  - pyyaml
+  - requests
+  - matplotlib-base
+  - pip:
+    # PyTorch cu128 wheels (pin matched triple — DO NOT bump one without the others)
+    - --index-url https://download.pytorch.org/whl/cu128
+    - --extra-index-url https://pypi.org/simple
+    - torch==2.7.1
+    - torchvision==0.22.1
+    - torchaudio==2.7.1
+    # ML helpers (PyPI)
+    - timm==1.0.22
+    - soundfile==0.12.1
+    - librosa==0.10.2
+    - onnx==1.17.0
+    - onnxruntime==1.20.1
+    - kaggle==1.7.4.5
